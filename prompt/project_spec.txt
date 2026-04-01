@@ -1,0 +1,13 @@
+
+PROJECT SPEC
+
+Build an interactive network simulator.
+
+Features:
+- drag devices onto canvas
+- assign IP addresses
+- simulate ping command
+- show packet log similar to wireshark
+- single page app behavior
+- React frontend
+- Flask backend
