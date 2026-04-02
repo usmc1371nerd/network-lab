@@ -1,9 +1,144 @@
-
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 
 const PROMPT = "lab@network:~$";
 const MAX_CAPTURE_SHOW_ROWS = 100;
+const USB_TYPES = new Set(["usb-storage", "usb-keyboard", "usb-mouse", "usb-webcam", "usb-audio", "usb-printer"]);
+const USB_CLASS = {
+  "usb-storage": "Mass Storage",
+  "usb-keyboard": "Human Interface Device",
+  "usb-mouse": "Human Interface Device",
+  "usb-webcam": "Video",
+  "usb-audio": "Audio",
+  "usb-printer": "Printer",
+};
+
+const localBtMac = () => "AA:BB:CC:10:20:30";
+
+const MAN_PAGES = {
+  man: [
+    "MAN(1)",
+    "",
+    "NAME",
+    "    man - format and display terminal command manuals",
+    "",
+    "SYNOPSIS",
+    "    man <command>",
+    "",
+    "EXAMPLES",
+    "    man ping",
+    "    man bluetoothctl",
+  ],
+  ping: [
+    "PING(8)",
+    "",
+    "NAME",
+    "    ping - send ICMP ECHO_REQUEST to network host",
+    "",
+    "SYNOPSIS",
+    "    ping <ip|device> [-c N]",
+    "",
+    "DESCRIPTION",
+    "    Resolves device name to IP if possible, then simulates ICMP traffic.",
+  ],
+  ip: [
+    "IP(8)",
+    "",
+    "NAME",
+    "    ip - show / manipulate routing and device status",
+    "",
+    "SYNOPSIS",
+    "    ip addr",
+    "    ip route",
+    "    ip neigh",
+  ],
+  arp: [
+    "ARP(8)",
+    "",
+    "NAME",
+    "    arp - manipulate the system ARP cache",
+    "",
+    "SYNOPSIS",
+    "    arp -a",
+  ],
+  lsusb: [
+    "LSUSB(8)",
+    "",
+    "NAME",
+    "    lsusb - list USB devices",
+    "",
+    "SYNOPSIS",
+    "    lsusb",
+  ],
+  lsblk: [
+    "LSBLK(8)",
+    "",
+    "NAME",
+    "    lsblk - list block devices",
+    "",
+    "SYNOPSIS",
+    "    lsblk",
+  ],
+  dmesg: [
+    "DMESG(1)",
+    "",
+    "NAME",
+    "    dmesg - print or control the kernel ring buffer",
+    "",
+    "SYNOPSIS",
+    "    dmesg",
+    "    dmesg | tail",
+  ],
+  bluetoothctl: [
+    "BLUETOOTHCTL(1)",
+    "",
+    "NAME",
+    "    bluetoothctl - interactive Bluetooth control utility",
+    "",
+    "SYNOPSIS",
+    "    bluetoothctl devices",
+    "    bluetoothctl scan on|off",
+    "    bluetoothctl pair <mac>",
+    "    bluetoothctl connect <mac>",
+    "    bluetoothctl info <mac>",
+  ],
+  tcpdump: [
+    "TCPDUMP(8)",
+    "",
+    "NAME",
+    "    tcpdump - dump traffic on a network",
+    "",
+    "SYNOPSIS",
+    "    tcpdump start|stop|status|show|clear",
+  ],
+  capture: [
+    "CAPTURE(1)",
+    "",
+    "NAME",
+    "    capture - alias for tcpdump control commands",
+    "",
+    "SYNOPSIS",
+    "    capture start|stop|status|show|clear",
+  ],
+  clear: [
+    "CLEAR(1)",
+    "",
+    "NAME",
+    "    clear - clear the terminal screen",
+    "",
+    "SYNOPSIS",
+    "    clear",
+  ],
+  help: [
+    "HELP(1)",
+    "",
+    "NAME",
+    "    help - show available lab commands",
+    "",
+    "SYNOPSIS",
+    "    help",
+  ],
+};
 
 export default function Terminal({
   devices,
@@ -11,6 +146,7 @@ export default function Terminal({
   onAppendPackets,
   onClearPackets,
   onShowPackets,
+  onTrafficGenerated,
 }) {
   const [history, setHistory] = useState([
     { type: "info", text: 'Network Lab Terminal — type "help" for usage.' },
@@ -21,8 +157,39 @@ export default function Terminal({
   const [histIdx, setHistIdx] = useState(-1);
   const [loading, setLoading] = useState(false);
   const [captureEnabled, setCaptureEnabled] = useState(false);
+  const [btScanEnabled, setBtScanEnabled] = useState(false);
+  const [btStateByMac, setBtStateByMac] = useState({});
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
+
+  const bluetoothDevices = devices.filter((device) => Boolean(device.btMac));
+  const usbDevices = devices.filter((device) => USB_TYPES.has(device.type));
+
+  const pushLines = (lines, type = "output") => {
+    setHistory((prev) => [
+      ...prev,
+      ...lines.map((text) => ({ type, text })),
+    ]);
+  };
+
+  const syncBluetoothState = () => {
+    setBtStateByMac((prev) => {
+      const next = {};
+      bluetoothDevices.forEach((device) => {
+        const mac = device.btMac.toLowerCase();
+        next[mac] = prev[mac] || { paired: false, connected: false };
+      });
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    syncBluetoothState();
+  }, [devices]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [history]);
 
   const getTerminalText = () => history.map((line) => line.text).join("\n");
 
@@ -80,31 +247,46 @@ export default function Terminal({
     }
   };
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history]);
-
-  const pushLines = (lines, type = "output") => {
-    setHistory((prev) => [
-      ...prev,
-      ...lines.map((text) => ({ type, text })),
-    ]);
+  const appendBlePackets = (rows) => {
+    if (rows.length === 0) return;
+    const result = onTrafficGenerated?.(rows);
+    const deliveredPackets = Array.isArray(result?.deliveredPackets) ? result.deliveredPackets : rows;
+    const droppedPackets = Array.isArray(result?.droppedPackets) ? result.droppedPackets : [];
+    if (!captureEnabled) return;
+    onAppendPackets([...deliveredPackets, ...droppedPackets]);
   };
+
+  const makeBlePacket = ({ time, src, dst, len = 31, info }) => ({
+    time,
+    src,
+    dst,
+    protocol: "BLE",
+    len,
+    info,
+  });
 
   const runCommand = async (cmd) => {
     const trimmed = cmd.trim();
     if (!trimmed) return;
 
-    // echo command
-    setHistory((prev) => [
-      ...prev,
-      { type: "cmd", text: `${PROMPT} ${trimmed}` },
-    ]);
+    setHistory((prev) => [...prev, { type: "cmd", text: `${PROMPT} ${trimmed}` }]);
     setCmdHistory((prev) => [trimmed, ...prev]);
     setHistIdx(-1);
 
     if (trimmed === "clear") {
       setHistory([]);
+      return;
+    }
+
+    const manMatch = trimmed.match(/^man\s+(.+)$/i);
+    if (manMatch) {
+      const topic = manMatch[1].trim().toLowerCase();
+      const page = MAN_PAGES[topic];
+      if (page) {
+        pushLines(page);
+      } else {
+        pushLines([`No manual entry for ${topic}`], "error");
+      }
       return;
     }
 
@@ -131,13 +313,179 @@ export default function Terminal({
           return `${octets[0]}.${octets[1]}.${octets[2]}.0/24 dev ${device.name.toLowerCase()}`;
         })
         .filter(Boolean);
+      pushLines(routed.length === 0 ? ["No routes configured."] : Array.from(new Set(routed)), "info");
+      return;
+    }
 
-      if (routed.length === 0) {
-        pushLines(["No routes configured."], "info");
+    if (trimmed === "ip neigh" || trimmed === "arp -a") {
+      const ipNodes = devices.filter((device) => device.ip);
+      if (ipNodes.length === 0) {
+        pushLines(["(no arp entries)"], "info");
       } else {
-        pushLines(Array.from(new Set(routed)));
+        const lines = ipNodes.map(
+          (device, index) => `${device.ip} dev eth0 lladdr 02:00:00:00:${String(index + 10).padStart(2, "0")}:${String(index + 20).padStart(2, "0")} REACHABLE`
+        );
+        pushLines(lines);
       }
       return;
+    }
+
+    if (trimmed === "lsusb") {
+      if (usbDevices.length === 0) {
+        pushLines(["(no usb devices detected)"], "info");
+      } else {
+        const lines = usbDevices.map((device, index) => {
+          const devNo = String(index + 2).padStart(3, "0");
+          const vendor = (1000 + index * 7).toString(16).padStart(4, "0");
+          const product = (2000 + index * 13).toString(16).padStart(4, "0");
+          return `Bus 001 Device ${devNo}: ID ${vendor}:${product} ${device.name} (${USB_CLASS[device.type] || "USB Device"})`;
+        });
+        pushLines(lines);
+      }
+      return;
+    }
+
+    if (trimmed === "lsblk") {
+      const storage = usbDevices.filter((device) => device.type === "usb-storage");
+      const lines = ["NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT", "sda      8:0    0  64G  0 disk /"];
+      storage.forEach((device, index) => {
+        lines.push(`sdb${index}    8:${16 + index}    1  32G  0 disk /media/${device.name.toLowerCase()}`);
+      });
+      pushLines(lines, "info");
+      return;
+    }
+
+    if (trimmed === "dmesg" || trimmed === "dmesg | tail" || trimmed === "dmesg | tail -n 20") {
+      const events = [
+        "[    0.000000] Linux version 6.8.0-networklab (simulated)",
+        "[    1.428511] usbcore: registered new interface driver usbfs",
+      ];
+      usbDevices.forEach((device, index) => {
+        events.push(`[    ${10 + index}.104201] usb 1-${index + 1}: new high-speed USB device number ${index + 2} using xhci_hcd`);
+        events.push(`[    ${10 + index}.203947] usb 1-${index + 1}: Product: ${device.name}`);
+      });
+      bluetoothDevices.forEach((device, index) => {
+        events.push(`[    ${20 + index}.553102] Bluetooth: hci0: discovered LE device ${device.btMac.toUpperCase()} (${device.name})`);
+      });
+      pushLines(trimmed === "dmesg" ? events : events.slice(-20));
+      return;
+    }
+
+    const bluetoothMatch = trimmed.match(/^bluetoothctl\s+(scan\s+(on|off)|devices|pair\s+\S+|connect\s+\S+|info\s+\S+)$/i);
+    if (bluetoothMatch) {
+      const parts = trimmed.split(/\s+/);
+      const action = parts[1]?.toLowerCase();
+
+      if (action === "scan") {
+        const mode = parts[2]?.toLowerCase();
+        if (mode === "on") {
+          setBtScanEnabled(true);
+          syncBluetoothState();
+          if (bluetoothDevices.length === 0) {
+            pushLines(["Discovery started", "No Bluetooth devices found in topology."], "info");
+          } else {
+            const discovered = bluetoothDevices.map((device) => `[NEW] Device ${device.btMac.toUpperCase()} ${device.name}`);
+            pushLines(["Discovery started", ...discovered], "info");
+            appendBlePackets(
+              bluetoothDevices.map((device, index) =>
+                makeBlePacket({
+                  time: Number((0.001 + index * 0.0008).toFixed(4)),
+                  src: device.btMac,
+                  dst: "ff:ff:ff:ff:ff:ff",
+                  len: 39,
+                  info: `ADV_IND ${device.name} RSSI=-${48 + index}dBm`,
+                })
+              )
+            );
+          }
+        } else {
+          setBtScanEnabled(false);
+          pushLines(["Discovery stopped"], "info");
+        }
+        return;
+      }
+
+      if (action === "devices") {
+        pushLines(
+          bluetoothDevices.length === 0
+            ? ["No default controller available"]
+            : bluetoothDevices.map((device) => `Device ${device.btMac.toUpperCase()} ${device.name}`),
+          "info"
+        );
+        return;
+      }
+
+      const targetToken = parts[2]?.toLowerCase();
+      const targetDevice = bluetoothDevices.find(
+        (device) => device.btMac.toLowerCase() === targetToken || device.name.toLowerCase() === targetToken
+      );
+
+      if (!targetDevice) {
+        pushLines([`Device ${parts[2]} not available`], "error");
+        return;
+      }
+
+      const macKey = targetDevice.btMac.toLowerCase();
+
+      if (action === "pair") {
+        setBtStateByMac((prev) => ({
+          ...prev,
+          [macKey]: { ...(prev[macKey] || {}), paired: true, connected: false },
+        }));
+        pushLines([
+          `Attempting to pair with ${targetDevice.btMac.toUpperCase()}`,
+          `[CHG] Device ${targetDevice.btMac.toUpperCase()} Paired: yes`,
+          "Pairing successful",
+        ], "info");
+        appendBlePackets([
+          makeBlePacket({ time: 0.0101, src: localBtMac(), dst: targetDevice.btMac, len: 23, info: "LL_PAIRING_REQ io_cap=KeyboardDisplay mitm=1 bond=1" }),
+          makeBlePacket({ time: 0.0117, src: targetDevice.btMac, dst: localBtMac(), len: 23, info: "LL_PAIRING_RSP io_cap=NoInputNoOutput mitm=0" }),
+          makeBlePacket({ time: 0.0139, src: targetDevice.btMac, dst: localBtMac(), len: 17, info: "SMP_PAIRING_COMPLETE status=success" }),
+        ]);
+        return;
+      }
+
+      if (action === "connect") {
+        const current = btStateByMac[macKey] || { paired: false, connected: false };
+        if (!current.paired) {
+          pushLines(["Failed to connect: org.bluez.Error.NotPaired"], "error");
+          appendBlePackets([
+            makeBlePacket({ time: 0.0201, src: localBtMac(), dst: targetDevice.btMac, len: 17, info: "CONNECT_REQ rejected (not paired)" }),
+          ]);
+        } else {
+          setBtStateByMac((prev) => ({
+            ...prev,
+            [macKey]: { ...(prev[macKey] || {}), paired: true, connected: true },
+          }));
+          pushLines([
+            `Attempting to connect to ${targetDevice.btMac.toUpperCase()}`,
+            "Connection successful",
+          ], "info");
+          appendBlePackets([
+            makeBlePacket({ time: 0.0204, src: localBtMac(), dst: targetDevice.btMac, len: 21, info: "CONNECT_REQ interval=36 latency=0 timeout=400" }),
+            makeBlePacket({ time: 0.0216, src: targetDevice.btMac, dst: localBtMac(), len: 15, info: "LL_CONNECTION_COMPLETE role=peripheral" }),
+          ]);
+        }
+        return;
+      }
+
+      if (action === "info") {
+        const current = btStateByMac[macKey] || { paired: false, connected: false };
+        pushLines([
+          `Device ${targetDevice.btMac.toUpperCase()} (${targetDevice.name})`,
+          `\tName: ${targetDevice.name}`,
+          `\tAlias: ${targetDevice.name}`,
+          `\tPaired: ${current.paired ? "yes" : "no"}`,
+          `\tTrusted: ${current.paired ? "yes" : "no"}`,
+          `\tConnected: ${current.connected ? "yes" : "no"}`,
+          `\tRSSI: ${btScanEnabled ? "-54" : "n/a"}`,
+        ]);
+        appendBlePackets([
+          makeBlePacket({ time: 0.0252, src: localBtMac(), dst: targetDevice.btMac, len: 27, info: "ATT Read By Group Type Req (Primary Services)" }),
+          makeBlePacket({ time: 0.0261, src: targetDevice.btMac, dst: localBtMac(), len: 31, info: "ATT Read By Group Type Rsp (GATT, Device Information)" }),
+        ]);
+        return;
+      }
     }
 
     const captureMatch = trimmed.match(/^(capture|tcpdump)\s+(start|stop|clear|show|status)$/i);
@@ -180,10 +528,7 @@ export default function Terminal({
             const info = String(packet.info ?? "");
             return `${no}${time}${src}${dst}${proto}${len}${info}`;
           });
-          const note =
-            packets.length > MAX_CAPTURE_SHOW_ROWS
-              ? [`Showing last ${MAX_CAPTURE_SHOW_ROWS} packets.`]
-              : [];
+          const note = packets.length > MAX_CAPTURE_SHOW_ROWS ? [`Showing last ${MAX_CAPTURE_SHOW_ROWS} packets.`] : [];
           pushLines([...header, ...rows, ...note, "Packet log panel updated."], "info");
         }
       } else if (action === "status") {
@@ -198,13 +543,23 @@ export default function Terminal({
     if (trimmed === "help") {
       pushLines([
         "Available commands:",
-        "  ping <ip> [-c N]         - send ICMP echo requests",
+        "  ping <ip|device> [-c N]  - send ICMP echo requests",
         "  ip addr | ip a           - show device interfaces",
         "  ip route                 - show basic routes",
+        "  ip neigh | arp -a        - show neighbor table",
+        "  lsusb                    - list USB/peripheral devices",
+        "  lsblk                    - list block/removable storage",
+        "  dmesg | dmesg | tail     - show kernel device logs",
+        "  bluetoothctl devices     - list Bluetooth devices",
+        "  bluetoothctl scan on|off - start/stop BT discovery",
+        "  bluetoothctl pair <mac>  - pair with Bluetooth device",
+        "  bluetoothctl connect <mac> - connect paired device",
+        "  bluetoothctl info <mac>  - show Bluetooth device details",
         "  tcpdump start|stop       - control packet capture",
         "  tcpdump clear|show       - clear/show capture buffer",
         "  tcpdump status           - show capture state",
         "  capture ...              - alias of tcpdump",
+        "  man <command>            - show command manual",
         "  help                     - show this help message",
         "  clear                    - clear terminal output",
       ]);
@@ -213,13 +568,44 @@ export default function Terminal({
 
     setLoading(true);
     try {
+      const pingByName = trimmed.match(/^ping\s+(\S+)(.*)$/i);
+      let normalizedCommand = trimmed;
+      if (pingByName) {
+        const target = pingByName[1].toLowerCase();
+        const suffix = pingByName[2] || "";
+        const matched = devices.find((device) => device.name.toLowerCase() === target && device.ip);
+        if (matched) {
+          normalizedCommand = `ping ${matched.ip}${suffix}`;
+        }
+      }
+
       const res = await axios.post("/api/run-command", {
-        command: trimmed,
+        command: normalizedCommand,
         devices,
       });
-      const { output = [], packets = [] } = res.data;
+      const { output = [], packets: generatedPackets = [] } = res.data;
       pushLines(output);
-      if (captureEnabled && packets.length > 0) onAppendPackets(packets);
+      if (generatedPackets.length > 0) {
+        const result = onTrafficGenerated?.(generatedPackets);
+        const deliveredPackets = Array.isArray(result?.deliveredPackets) ? result.deliveredPackets : generatedPackets;
+        const droppedPackets = Array.isArray(result?.droppedPackets) ? result.droppedPackets : [];
+        if (captureEnabled) {
+          onAppendPackets([...deliveredPackets, ...droppedPackets]);
+        }
+        if (droppedPackets.length > 0) {
+          const reasonCounts = droppedPackets.reduce((acc, packet) => {
+            const match = String(packet.info || "").match(/^DROP \(([^)]+)\)/);
+            const reason = match?.[1] || "unknown";
+            acc[reason] = (acc[reason] || 0) + 1;
+            return acc;
+          }, {});
+          const details = Object.entries(reasonCounts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([reason, count]) => `${reason}:${count}`)
+            .join(", ");
+          pushLines([`[sim] dropped by link conditions: ${droppedPackets.length} (${details})`], "info");
+        }
+      }
     } catch (err) {
       pushLines([`Error: ${err.message}`], "error");
     } finally {
@@ -252,9 +638,7 @@ export default function Terminal({
             {line.text}
           </div>
         ))}
-        {loading && (
-          <div className="terminal-line line-info">Running…</div>
-        )}
+        {loading && <div className="terminal-line line-info">Running…</div>}
         <div ref={bottomRef} />
       </div>
 
