@@ -110,7 +110,22 @@ const MAN_PAGES = {
     "",
     "SYNOPSIS",
     "    ssh <device|ip>",
+    "    ssh <device|ip> via <gateway>",
     "    exit",
+  ],
+  ble: [
+    "BLE(1)",
+    "",
+    "NAME",
+    "    ble - interact with Bluetooth devices for monitoring/ops",
+    "",
+    "SYNOPSIS",
+    "    ble connect <device|mac>",
+    "    ble status",
+    "    ble monitor",
+    "    ble read <characteristic>",
+    "    ble write <characteristic> <value>",
+    "    ble disconnect",
   ],
   sendpkt: [
     "SENDPKT(1)",
@@ -179,6 +194,9 @@ export default function Terminal({
   const [btScanEnabled, setBtScanEnabled] = useState(false);
   const [btStateByMac, setBtStateByMac] = useState({});
   const [sshSessionDeviceId, setSshSessionDeviceId] = useState(null);
+  const [sshProxyGatewayId, setSshProxyGatewayId] = useState(null);
+  const [bleSessionDeviceId, setBleSessionDeviceId] = useState(null);
+  const [bleProxyGatewayId, setBleProxyGatewayId] = useState(null);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -187,16 +205,41 @@ export default function Terminal({
   const sshSessionDevice = sshSessionDeviceId
     ? devices.find((device) => String(device.id) === String(sshSessionDeviceId))
     : null;
-  const prompt = sshSessionDevice
-    ? `${sshSessionDevice.name.toLowerCase()}@lab:~$`
-    : DEFAULT_PROMPT;
+  const sshProxyGateway = sshProxyGatewayId
+    ? devices.find((device) => String(device.id) === String(sshProxyGatewayId))
+    : null;
+  const bleSessionDevice = bleSessionDeviceId
+    ? devices.find((device) => String(device.id) === String(bleSessionDeviceId))
+    : null;
+  const bleProxyGateway = bleProxyGatewayId
+    ? devices.find((device) => String(device.id) === String(bleProxyGatewayId))
+    : null;
+
+  const prompt = bleSessionDevice
+    ? bleProxyGateway
+      ? `ble:${bleSessionDevice.name.toLowerCase()}@${bleProxyGateway.name.toLowerCase()}(proxy)$`
+      : `ble:${bleSessionDevice.name.toLowerCase()}$`
+    : sshSessionDevice
+      ? sshProxyGateway
+        ? `${sshSessionDevice.name.toLowerCase()}@${sshProxyGateway.name.toLowerCase()}(proxy):~$`
+        : `${sshSessionDevice.name.toLowerCase()}@lab:~$`
+      : DEFAULT_PROMPT;
 
   useEffect(() => {
     if (sshSessionDeviceId && !sshSessionDevice) {
       setSshSessionDeviceId(null);
+      setSshProxyGatewayId(null);
       pushLines(["SSH session closed: host no longer exists."], "info");
     }
   }, [sshSessionDeviceId, sshSessionDevice]);
+
+  useEffect(() => {
+    if (bleSessionDeviceId && !bleSessionDevice) {
+      setBleSessionDeviceId(null);
+      setBleProxyGatewayId(null);
+      pushLines(["BLE session closed: device no longer exists."], "info");
+    }
+  }, [bleSessionDeviceId, bleSessionDevice]);
 
   const pushLines = (lines, type = "output") => {
     setHistory((prev) => [
@@ -308,6 +351,18 @@ export default function Terminal({
     ) || null;
   };
 
+  const findBluetoothDeviceByToken = (token) => {
+    if (!token) return null;
+    const normalized = token.trim().toLowerCase();
+    return devices.find((device) =>
+      Boolean(device.btMac) && (
+        String(device.id) === normalized ||
+        String(device.name || "").toLowerCase() === normalized ||
+        String(device.btMac || "").toLowerCase() === normalized
+      )
+    ) || null;
+  };
+
   const runCommand = async (cmd) => {
     const trimmed = cmd.trim();
     if (!trimmed) return;
@@ -316,14 +371,59 @@ export default function Terminal({
     setCmdHistory((prev) => [trimmed, ...prev]);
     setHistIdx(-1);
 
+    const sshProxyMatch = trimmed.match(/^ssh\s+(\S+)\s+via\s+(\S+)$/i);
+    if (sshProxyMatch) {
+      const target = findDeviceByToken(sshProxyMatch[1]);
+      const gateway = findDeviceByToken(sshProxyMatch[2]);
+      if (!target) {
+        pushLines([`ssh: Could not resolve hostname ${sshProxyMatch[1]}: Name or service not known`], "error");
+        return;
+      }
+      if (!gateway || !gateway.ip) {
+        pushLines([`ssh: gateway '${sshProxyMatch[2]}' is unavailable or missing IP`], "error");
+        return;
+      }
+
+      if (target.btMac && !target.ip) {
+        setBleSessionDeviceId(target.id);
+        setBleProxyGatewayId(gateway.id);
+        setSshSessionDeviceId(null);
+        setSshProxyGatewayId(null);
+        pushLines([
+          `Proxy BLE session established to ${target.name} via ${gateway.name}.`,
+          "Use 'ble status', 'ble monitor', 'ble read <char>', 'ble write <char> <value>', or 'ble disconnect'.",
+        ], "info");
+      } else {
+        setSshSessionDeviceId(target.id);
+        setSshProxyGatewayId(gateway.id);
+        setBleSessionDeviceId(null);
+        setBleProxyGatewayId(null);
+        pushLines([
+          `Connected to ${target.name}${target.ip ? ` (${target.ip})` : ""} via proxy ${gateway.name}.`,
+          "Type 'exit' to leave SSH session.",
+        ], "info");
+      }
+      return;
+    }
+
     const sshMatch = trimmed.match(/^ssh\s+(\S+)$/i);
     if (sshMatch) {
       const targetToken = sshMatch[1];
       const target = findDeviceByToken(targetToken);
       if (!target) {
         pushLines([`ssh: Could not resolve hostname ${targetToken}: Name or service not known`], "error");
+      } else if (target.btMac && !target.ip) {
+        pushLines([
+          `ssh: ${target.name} is a Bluetooth endpoint and does not expose SSH directly.`,
+          `Try: ssh ${target.name} via <gateway> or use 'ble connect ${target.name}'.`,
+        ], "error");
+      } else if (!target.ip) {
+        pushLines([`ssh: ${target.name} has no IP address configured.`], "error");
       } else {
         setSshSessionDeviceId(target.id);
+        setSshProxyGatewayId(null);
+        setBleSessionDeviceId(null);
+        setBleProxyGatewayId(null);
         pushLines([
           `Connected to ${target.name}${target.ip ? ` (${target.ip})` : ""}.`,
           "Type 'exit' to leave SSH session.",
@@ -332,10 +432,92 @@ export default function Terminal({
       return;
     }
 
+    const bleMatch = trimmed.match(/^ble\s+(connect\s+\S+|status|monitor|read\s+\S+|write\s+\S+\s+.+|disconnect)$/i);
+    if (bleMatch) {
+      const parts = trimmed.split(/\s+/);
+      const action = parts[1]?.toLowerCase();
+
+      if (action === "connect") {
+        const target = findBluetoothDeviceByToken(parts[2]);
+        if (!target) {
+          pushLines([`ble: device '${parts[2]}' not found`], "error");
+        } else {
+          setBleSessionDeviceId(target.id);
+          setBleProxyGatewayId(null);
+          setSshSessionDeviceId(null);
+          setSshProxyGatewayId(null);
+          pushLines([`BLE session connected to ${target.name} (${target.btMac.toUpperCase()}).`], "info");
+        }
+        return;
+      }
+
+      if (action === "disconnect") {
+        if (bleSessionDevice) {
+          pushLines([`BLE session disconnected from ${bleSessionDevice.name}.`], "info");
+          setBleSessionDeviceId(null);
+          setBleProxyGatewayId(null);
+        } else {
+          pushLines(["No active BLE session."], "info");
+        }
+        return;
+      }
+
+      if (!bleSessionDevice) {
+        pushLines(["No active BLE session. Use: ble connect <device|mac>"], "error");
+        return;
+      }
+
+      if (action === "status") {
+        pushLines([
+          `BLE target: ${bleSessionDevice.name}`,
+          `Address: ${bleSessionDevice.btMac.toUpperCase()}`,
+          `Proxy: ${bleProxyGateway ? bleProxyGateway.name : "none"}`,
+        ], "info");
+        return;
+      }
+
+      if (action === "monitor") {
+        const rows = [
+          makeBlePacket({ time: 0.0412, src: localBtMac(), dst: bleSessionDevice.btMac, len: 27, info: "ATT Read By Type Req Handle:0x0001 UUID:0x2A19" }),
+          makeBlePacket({ time: 0.0448, src: bleSessionDevice.btMac, dst: localBtMac(), len: 25, info: "ATT Read By Type Rsp Battery Level: 93%" }),
+          makeBlePacket({ time: 0.0524, src: bleSessionDevice.btMac, dst: localBtMac(), len: 31, info: `Notify telemetry from ${bleSessionDevice.name}` }),
+        ];
+        appendBlePackets(rows);
+        pushLines([`Monitoring BLE telemetry from ${bleSessionDevice.name}...`], "info");
+        return;
+      }
+
+      if (action === "read") {
+        const characteristic = parts[2];
+        appendBlePackets([
+          makeBlePacket({ time: 0.0611, src: localBtMac(), dst: bleSessionDevice.btMac, len: 24, info: `ATT Read Req ${characteristic}` }),
+          makeBlePacket({ time: 0.0643, src: bleSessionDevice.btMac, dst: localBtMac(), len: 29, info: `ATT Read Rsp ${characteristic}=simulated-value` }),
+        ]);
+        pushLines([`ble read ${characteristic}: simulated-value`], "info");
+        return;
+      }
+
+      if (action === "write") {
+        const characteristic = parts[2];
+        const value = parts.slice(3).join(" ");
+        appendBlePackets([
+          makeBlePacket({ time: 0.0722, src: localBtMac(), dst: bleSessionDevice.btMac, len: 28, info: `ATT Write Req ${characteristic}=${value}` }),
+          makeBlePacket({ time: 0.0749, src: bleSessionDevice.btMac, dst: localBtMac(), len: 21, info: "ATT Write Rsp status=ok" }),
+        ]);
+        pushLines([`ble write ${characteristic}: ok`], "info");
+        return;
+      }
+    }
+
     if (trimmed === "exit") {
       if (sshSessionDevice) {
         pushLines([`logout from ${sshSessionDevice.name}`], "info");
         setSshSessionDeviceId(null);
+        setSshProxyGatewayId(null);
+      } else if (bleSessionDevice) {
+        pushLines([`BLE session closed from ${bleSessionDevice.name}`], "info");
+        setBleSessionDeviceId(null);
+        setBleProxyGatewayId(null);
       } else {
         pushLines(["exit"], "info");
       }
@@ -648,7 +830,12 @@ export default function Terminal({
         "Available commands:",
         "  ping <ip|device> [-c N]  - send ICMP echo requests",
         "  ssh <device|ip>          - open host command context",
+        "  ssh <target> via <gateway> - proxy session via gateway",
         "  sendpkt <dst> [proto]    - send a synthetic packet from ssh host",
+        "  ble connect <device|mac> - open BLE monitoring session",
+        "  ble status|monitor       - inspect BLE target telemetry",
+        "  ble read|write           - simulate BLE GATT operations",
+        "  ble disconnect           - close BLE session",
         "  exit                     - close ssh host context",
         "  ip addr | ip a           - show device interfaces",
         "  ip route                 - show basic routes",
@@ -688,7 +875,7 @@ export default function Terminal({
       const res = await axios.post("/api/run-command", {
         command: normalizedCommand,
         devices,
-        sourceDeviceId: sshSessionDevice?.id || null,
+        sourceDeviceId: sshProxyGateway?.id || sshSessionDevice?.id || null,
       });
       const { output = [], packets: generatedPackets = [] } = res.data;
       pushLines(output);
