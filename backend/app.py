@@ -33,6 +33,7 @@ def run_command():
     data = request.json
     command = (data.get("command") or "").strip()
     devices = data.get("devices", [])
+    source_device_id = str(data.get("sourceDeviceId")) if data.get("sourceDeviceId") is not None else None
 
     parts = command.split()
     packets = []
@@ -53,8 +54,21 @@ def run_command():
         count = parse_ping_count(parts)
 
         ip_devices = [d for d in devices if d.get("ip")]
-        source = ip_devices[0] if ip_devices else None
+        source = None
+        if source_device_id:
+            source = next((d for d in ip_devices if str(d.get("id")) == source_device_id), None)
         target = next((d for d in ip_devices if d.get("ip") == target_ip), None)
+
+        if not source:
+            if target:
+                source = next((d for d in ip_devices if d.get("ip") != target_ip), None)
+            if not source:
+                source = ip_devices[0] if ip_devices else None
+
+        if target and source and source.get("ip") == target_ip:
+            alt_source = next((d for d in ip_devices if d.get("ip") != target_ip), None)
+            if alt_source:
+                source = alt_source
 
         src_ip = source["ip"] if source else "192.168.1.1"
         src_mac = make_mac()

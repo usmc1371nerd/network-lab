@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 
-const PROMPT = "lab@network:~$";
+const DEFAULT_PROMPT = "lab@network:~$";
 const MAX_CAPTURE_SHOW_ROWS = 100;
 const USB_TYPES = new Set(["usb-storage", "usb-keyboard", "usb-mouse", "usb-webcam", "usb-audio", "usb-printer"]);
 const USB_CLASS = {
@@ -102,6 +102,25 @@ const MAN_PAGES = {
     "    bluetoothctl connect <mac>",
     "    bluetoothctl info <mac>",
   ],
+  ssh: [
+    "SSH(1)",
+    "",
+    "NAME",
+    "    ssh - switch command context to a simulated host",
+    "",
+    "SYNOPSIS",
+    "    ssh <device|ip>",
+    "    exit",
+  ],
+  sendpkt: [
+    "SENDPKT(1)",
+    "",
+    "NAME",
+    "    sendpkt - send one synthetic packet from active ssh host",
+    "",
+    "SYNOPSIS",
+    "    sendpkt <device|ip> [PROTO]",
+  ],
   tcpdump: [
     "TCPDUMP(8)",
     "",
@@ -159,11 +178,25 @@ export default function Terminal({
   const [captureEnabled, setCaptureEnabled] = useState(false);
   const [btScanEnabled, setBtScanEnabled] = useState(false);
   const [btStateByMac, setBtStateByMac] = useState({});
+  const [sshSessionDeviceId, setSshSessionDeviceId] = useState(null);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
 
   const bluetoothDevices = devices.filter((device) => Boolean(device.btMac));
   const usbDevices = devices.filter((device) => USB_TYPES.has(device.type));
+  const sshSessionDevice = sshSessionDeviceId
+    ? devices.find((device) => String(device.id) === String(sshSessionDeviceId))
+    : null;
+  const prompt = sshSessionDevice
+    ? `${sshSessionDevice.name.toLowerCase()}@lab:~$`
+    : DEFAULT_PROMPT;
+
+  useEffect(() => {
+    if (sshSessionDeviceId && !sshSessionDevice) {
+      setSshSessionDeviceId(null);
+      pushLines(["SSH session closed: host no longer exists."], "info");
+    }
+  }, [sshSessionDeviceId, sshSessionDevice]);
 
   const pushLines = (lines, type = "output") => {
     setHistory((prev) => [
@@ -265,13 +298,83 @@ export default function Terminal({
     info,
   });
 
+  const findDeviceByToken = (token) => {
+    if (!token) return null;
+    const normalized = token.trim().toLowerCase();
+    return devices.find((device) =>
+      String(device.id) === normalized ||
+      String(device.name || "").toLowerCase() === normalized ||
+      String(device.ip || "").toLowerCase() === normalized
+    ) || null;
+  };
+
   const runCommand = async (cmd) => {
     const trimmed = cmd.trim();
     if (!trimmed) return;
 
-    setHistory((prev) => [...prev, { type: "cmd", text: `${PROMPT} ${trimmed}` }]);
+    setHistory((prev) => [...prev, { type: "cmd", text: `${prompt} ${trimmed}` }]);
     setCmdHistory((prev) => [trimmed, ...prev]);
     setHistIdx(-1);
+
+    const sshMatch = trimmed.match(/^ssh\s+(\S+)$/i);
+    if (sshMatch) {
+      const targetToken = sshMatch[1];
+      const target = findDeviceByToken(targetToken);
+      if (!target) {
+        pushLines([`ssh: Could not resolve hostname ${targetToken}: Name or service not known`], "error");
+      } else {
+        setSshSessionDeviceId(target.id);
+        pushLines([
+          `Connected to ${target.name}${target.ip ? ` (${target.ip})` : ""}.`,
+          "Type 'exit' to leave SSH session.",
+        ], "info");
+      }
+      return;
+    }
+
+    if (trimmed === "exit") {
+      if (sshSessionDevice) {
+        pushLines([`logout from ${sshSessionDevice.name}`], "info");
+        setSshSessionDeviceId(null);
+      } else {
+        pushLines(["exit"], "info");
+      }
+      return;
+    }
+
+    const sendPktMatch = trimmed.match(/^sendpkt\s+(\S+)(?:\s+(\S+))?$/i);
+    if (sendPktMatch) {
+      if (!sshSessionDevice || !sshSessionDevice.ip) {
+        pushLines(["sendpkt requires an active SSH session on a host with an IP address."], "error");
+        return;
+      }
+      const targetToken = sendPktMatch[1];
+      const protocol = (sendPktMatch[2] || "UDP").toUpperCase();
+      const targetDevice = findDeviceByToken(targetToken);
+      if (!targetDevice || !targetDevice.ip) {
+        pushLines([`sendpkt: target '${targetToken}' not found or missing IP`], "error");
+        return;
+      }
+      const syntheticPacket = [{
+        time: Number((0.001 + Math.random() * 0.01).toFixed(4)),
+        src: sshSessionDevice.ip,
+        dst: targetDevice.ip,
+        protocol,
+        len: 64,
+        info: `Synthetic ${protocol} payload from ${sshSessionDevice.name} to ${targetDevice.name}`,
+      }];
+      const result = onTrafficGenerated?.(syntheticPacket);
+      const deliveredPackets = Array.isArray(result?.deliveredPackets) ? result.deliveredPackets : syntheticPacket;
+      const droppedPackets = Array.isArray(result?.droppedPackets) ? result.droppedPackets : [];
+      if (captureEnabled) {
+        onAppendPackets([...deliveredPackets, ...droppedPackets]);
+      }
+      pushLines([
+        `sendpkt: ${sshSessionDevice.name} -> ${targetDevice.name} (${protocol})`,
+        `delivered=${deliveredPackets.length} dropped=${droppedPackets.length}`,
+      ], droppedPackets.length > 0 ? "error" : "info");
+      return;
+    }
 
     if (trimmed === "clear") {
       setHistory([]);
@@ -544,6 +647,9 @@ export default function Terminal({
       pushLines([
         "Available commands:",
         "  ping <ip|device> [-c N]  - send ICMP echo requests",
+        "  ssh <device|ip>          - open host command context",
+        "  sendpkt <dst> [proto]    - send a synthetic packet from ssh host",
+        "  exit                     - close ssh host context",
         "  ip addr | ip a           - show device interfaces",
         "  ip route                 - show basic routes",
         "  ip neigh | arp -a        - show neighbor table",
@@ -582,6 +688,7 @@ export default function Terminal({
       const res = await axios.post("/api/run-command", {
         command: normalizedCommand,
         devices,
+        sourceDeviceId: sshSessionDevice?.id || null,
       });
       const { output = [], packets: generatedPackets = [] } = res.data;
       pushLines(output);
@@ -649,7 +756,7 @@ export default function Terminal({
         <button className="terminal-tool" onClick={pasteFromClipboard} disabled={loading}>
           Paste
         </button>
-        <span className="terminal-prompt">{PROMPT}</span>
+        <span className="terminal-prompt">{prompt}</span>
         <input
           ref={inputRef}
           className="terminal-input"

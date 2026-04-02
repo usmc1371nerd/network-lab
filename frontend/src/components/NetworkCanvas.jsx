@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
 const DEVICE_ICONS = {
   pc: "💻",
@@ -73,6 +73,7 @@ export default function NetworkCanvas({
   connections,
   trafficStats,
   linkTrafficStats,
+  packetFlights,
   onAddDevice,
   onUpdateDevice,
   onRemoveDevice,
@@ -91,6 +92,12 @@ export default function NetworkCanvas({
   const [selectedConnectionKey, setSelectedConnectionKey] = useState(null);
   const [advancedLinkControls, setAdvancedLinkControls] = useState(false);
   const [linkPreset, setLinkPreset] = useState("stable");
+  const [clockMs, setClockMs] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setClockMs(Date.now()), 40);
+    return () => clearInterval(timer);
+  }, []);
 
   /* ── palette drag ─────────────────────────────────────────── */
   const onPaletteDragStart = (e, type) => {
@@ -167,6 +174,19 @@ export default function NetworkCanvas({
   };
 
   const center = (d) => ({ cx: d.x + NODE_W / 2, cy: d.y + NODE_H / 2 });
+
+  const pointOnQuadratic = (startPoint, controlPoint, endPoint, t) => {
+    const oneMinusT = 1 - t;
+    const x =
+      oneMinusT * oneMinusT * startPoint.cx +
+      2 * oneMinusT * t * controlPoint.x +
+      t * t * endPoint.cx;
+    const y =
+      oneMinusT * oneMinusT * startPoint.cy +
+      2 * oneMinusT * t * controlPoint.y +
+      t * t * endPoint.cy;
+    return { x, y };
+  };
 
   const toggleGroup = (title) => {
     setCollapsedGroups((prev) => ({
@@ -597,6 +617,7 @@ export default function NetworkCanvas({
 
             const inboundPath = `M ${s.cx} ${s.cy} Q ${topCtrl.x} ${topCtrl.y} ${t.cx} ${t.cy}`;
             const outboundPath = `M ${s.cx} ${s.cy} Q ${bottomCtrl.x} ${bottomCtrl.y} ${t.cx} ${t.cy}`;
+            const linkFlights = (packetFlights || []).filter((flight) => flight.linkKey === linkKey);
 
             const inboundMuted = direction === "forward";
             const outboundMuted = direction === "reverse";
@@ -662,6 +683,27 @@ export default function NetworkCanvas({
                     <text x="0" y="1" textAnchor="middle" className="conn-badge-text">r-{linkFlow.redDrops}</text>
                   </g>
                 )}
+
+                {linkFlights.map((flight) => {
+                  const usesOutboundPath = flight.direction === "forward";
+                  const isReverseFlight = flight.direction === "reverse";
+                  const startPoint = isReverseFlight ? t : s;
+                  const endPoint = isReverseFlight ? s : t;
+                  const controlPoint = usesOutboundPath ? bottomCtrl : topCtrl;
+                  const elapsed = Math.max(0, clockMs - (flight.createdAt || clockMs));
+                  const duration = Math.max(400, flight.durationMs || 1200);
+                  const progress = Math.min(1, elapsed / duration);
+                  const position = pointOnQuadratic(startPoint, controlPoint, endPoint, progress);
+                  return (
+                    <circle
+                      key={flight.id}
+                      cx={position.x}
+                      cy={position.y}
+                      r="4.2"
+                      className={`packet-flight-dot ${usesOutboundPath ? "outbound" : "inbound"}`}
+                    />
+                  );
+                })}
               </g>
             );
           })}

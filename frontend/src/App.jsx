@@ -41,7 +41,16 @@ export default function App() {
   const [displayedPackets, setDisplayedPackets] = useState([]);
   const [trafficStats, setTrafficStats] = useState({});
   const [linkTrafficStats, setLinkTrafficStats] = useState({});
+  const [packetFlights, setPacketFlights] = useState([]);
   const linkRuntimeRef = useRef({});
+  const flightTimeoutsRef = useRef([]);
+
+  useEffect(() => {
+    return () => {
+      flightTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+      flightTimeoutsRef.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     const activeKeys = new Set(connections.map((conn) => `${conn.from}->${conn.to}`));
@@ -119,6 +128,9 @@ export default function App() {
       });
       return next;
     });
+    setPacketFlights((prev) =>
+      prev.filter((flight) => flight.fromId !== id && flight.toId !== id)
+    );
   }, []);
 
   const addConnection = useCallback((from, to, direction = "both") => {
@@ -193,6 +205,7 @@ export default function App() {
     const droppedPackets = [];
     const trafficIncrements = [];
     const linkIncrements = [];
+    const flights = [];
 
     const toNumber = (value, fallback = 0) => {
       const parsed = Number(value);
@@ -313,7 +326,27 @@ export default function App() {
         key: linkKey,
         direction: conn.from === srcId && conn.to === dstId ? "forward" : "reverse",
       });
+      flights.push({
+        id: `flight-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        linkKey,
+        direction: conn.from === srcId && conn.to === dstId ? "forward" : "reverse",
+        protocol: String(packet.protocol || "").toUpperCase(),
+        fromId: srcId,
+        toId: dstId,
+        createdAt: Date.now(),
+        durationMs: Math.max(1400, Math.min(4200, Math.round((effectiveLatencyMs + serviceIntervalMs + 700) * 2.2))),
+      });
     });
+
+    if (flights.length > 0) {
+      setPacketFlights((prev) => [...prev, ...flights]);
+      flights.forEach((flight) => {
+        const timeoutId = setTimeout(() => {
+          setPacketFlights((prev) => prev.filter((item) => item.id !== flight.id));
+        }, flight.durationMs + 120);
+        flightTimeoutsRef.current.push(timeoutId);
+      });
+    }
 
     setTrafficStats((prev) => {
       const next = { ...prev };
@@ -383,6 +416,7 @@ export default function App() {
             connections={connections}
             trafficStats={trafficStats}
             linkTrafficStats={linkTrafficStats}
+            packetFlights={packetFlights}
             onAddDevice={addDevice}
             onUpdateDevice={updateDevice}
             onRemoveDevice={removeDevice}
