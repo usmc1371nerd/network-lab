@@ -1,13 +1,68 @@
 
 PROJECT SPEC
 
-Build an interactive network simulator.
+Build an interactive network simulator and network-lab sandbox.
 
-Features:
-- drag devices onto canvas
-- assign IP addresses
-- simulate ping command
-- show packet log similar to wireshark
-- single page app behavior
+Current stack:
 - React frontend
 - Flask backend
+- single page app behavior
+
+Core implemented features:
+- drag devices onto canvas
+- assign IP addresses
+- create links between devices
+- support directional links (bi-directional, forward-only, reverse-only)
+- simulate `ping` command
+- show packet log similar to Wireshark
+- Linux-style terminal workflow
+- capture controls with `tcpdump` / `capture start|stop|show|clear|status`
+- explicit separation between command execution and packet visibility
+
+Implemented device categories:
+- Core devices: PC, Server, Router, Switch
+- Bluetooth devices: Phone, Laptop, Beacon, Sensor, Gateway
+- IoT devices: bulb, lock, tag, camera, thermostat, plug
+- Other peripherals: USB storage, keyboard, mouse, webcam, audio, printer
+
+Implemented terminal/network behaviors:
+- `ping`, `ip addr`, `ip route`, `ip neigh`, `arp -a`
+- `lsusb`, `lsblk`, `dmesg`
+- `bluetoothctl devices|scan|pair|connect|info`
+- `man <command>` help pages
+- terminal copy/paste support
+
+Implemented traffic and visualization features:
+- per-device inbound/outbound traffic counters
+- per-link directional traffic counters
+- separate inbound/outbound rendered link paths
+- packet capture buffering and explicit reveal to packet panel
+- Bluetooth packet simulation
+- simulated ARP / ICMP / BLE traffic generation
+
+Implemented link realism controls:
+- packet loss percentage
+- latency
+- jitter
+- blocked links
+- queue capacity
+- bandwidth throttling in packets/sec
+- RED-style early drop behavior
+- visual drop telemetry for blocked, queue, and RED conditions
+- presets for Stable / Congested / Hostile links
+- simplified link editor with optional advanced controls
+
+Near-term future features:
+- SSH into simulated computers for live monitoring
+- open an interactive SSH-style terminal session to a selected host
+- inspect host state in real time (processes, interfaces, routes, logs, services)
+- run monitoring commands such as `top`, `ip addr`, `ss`, `netstat`, `tail`, `journalctl`, and log viewers
+- tie SSH session output to topology state and packet activity
+- optionally allow per-host role simulation (user workstation, server, IoT gateway, attacker box)
+
+Longer-term direction:
+- richer threat-model scenarios
+- protocol-aware filtering / ACL behavior
+- service simulation on hosts
+- alerting / detection workflows
+- training-lab style monitoring and incident response exercises
