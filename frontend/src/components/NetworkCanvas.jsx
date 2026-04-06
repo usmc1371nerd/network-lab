@@ -1,5 +1,9 @@
 
 import React, { useState, useRef, useEffect } from "react";
+import {
+  getConnectionSecurityInsights,
+  getDeviceSecurityInsights,
+} from "../securityInsights";
 
 const DEVICE_ICONS = {
   pc: "💻",
@@ -93,11 +97,29 @@ export default function NetworkCanvas({
   const [advancedLinkControls, setAdvancedLinkControls] = useState(false);
   const [linkPreset, setLinkPreset] = useState("stable");
   const [clockMs, setClockMs] = useState(Date.now());
+  const [securityInspector, setSecurityInspector] = useState(null);
 
   useEffect(() => {
     const timer = setInterval(() => setClockMs(Date.now()), 40);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!securityInspector) return;
+
+    if (securityInspector.type === "device") {
+      const exists = devices.some((device) => device.id === securityInspector.deviceId);
+      if (!exists) setSecurityInspector(null);
+      return;
+    }
+
+    if (securityInspector.type === "connection") {
+      const exists = connections.some(
+        (conn) => `${conn.from}->${conn.to}` === securityInspector.connectionKey
+      );
+      if (!exists) setSecurityInspector(null);
+    }
+  }, [securityInspector, devices, connections]);
 
   /* ── palette drag ─────────────────────────────────────────── */
   const onPaletteDragStart = (e, type) => {
@@ -209,6 +231,28 @@ export default function NetworkCanvas({
 
   const selectedConnection =
     connections.find((conn) => `${conn.from}->${conn.to}` === selectedConnectionKey) || null;
+
+  const inspectedDevice = securityInspector?.type === "device"
+    ? devices.find((device) => device.id === securityInspector.deviceId) || null
+    : null;
+  const inspectedConnection = securityInspector?.type === "connection"
+    ? connections.find((conn) => `${conn.from}->${conn.to}` === securityInspector.connectionKey) || null
+    : null;
+  const securityFindings = inspectedDevice
+    ? getDeviceSecurityInsights(inspectedDevice, devices, connections)
+    : inspectedConnection
+      ? getConnectionSecurityInsights(inspectedConnection, devices, connections)
+      : [];
+  const securityTitle = inspectedDevice
+    ? inspectedDevice.name
+    : inspectedConnection
+      ? `${devices.find((device) => device.id === inspectedConnection.from)?.name || inspectedConnection.from} ↔ ${devices.find((device) => device.id === inspectedConnection.to)?.name || inspectedConnection.to}`
+      : "Security insight";
+  const securitySubtitle = inspectedDevice
+    ? "Device-level educational concerns"
+    : inspectedConnection
+      ? "Link-level educational concerns"
+      : "";
 
   const selectedSource = selectedConnection
     ? devices.find((device) => device.id === selectedConnection.from)
@@ -643,6 +687,19 @@ export default function NetworkCanvas({
                 <path d={inboundPath} className={`conn-path conn-inbound${inboundMuted ? " muted" : ""}${isSelected ? " selected" : ""}`} />
                 <path d={outboundPath} className={`conn-path conn-outbound${outboundMuted ? " muted" : ""}${isSelected ? " selected" : ""}`} />
 
+                <g
+                  className="conn-info-button"
+                  transform={`translate(${m.x}, ${m.y - 22})`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedConnectionKey(linkKey);
+                    setSecurityInspector({ type: "connection", connectionKey: linkKey });
+                  }}
+                >
+                  <circle r="9" className="conn-info-circle" />
+                  <text y="1" textAnchor="middle" className="conn-info-text">i</text>
+                </g>
+
                 <text x={topCtrl.x} y={topCtrl.y - 8} textAnchor="middle" className="conn-label-in">
                   Inbound
                 </text>
@@ -730,6 +787,16 @@ export default function NetworkCanvas({
             >
               ×
             </button>
+            <button
+              className="device-insight"
+              title="View security insight"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSecurityInspector({ type: "device", deviceId: device.id });
+              }}
+            >
+              i
+            </button>
             <span className="device-icon">{DEVICE_ICONS[device.type]}</span>
             <div className="device-info">
               <div className="device-name">{device.name}</div>
@@ -771,6 +838,44 @@ export default function NetworkCanvas({
         {devices.length === 0 && (
           <div className="canvas-empty">
             ← Drag a device onto the canvas to begin
+          </div>
+        )}
+
+        {securityInspector && (
+          <div
+            className="security-panel"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="security-panel-header">
+              <div>
+                <div className="security-panel-title">{securityTitle}</div>
+                <div className="security-panel-subtitle">{securitySubtitle}</div>
+              </div>
+              <button
+                className="security-panel-close"
+                onClick={() => setSecurityInspector(null)}
+                title="Close security insights"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="security-panel-note">
+              Topology-based guidance only. These findings are educational hints, not live scanning results.
+            </div>
+
+            <div className="security-findings">
+              {securityFindings.map((finding) => (
+                <div key={`${finding.severity}-${finding.title}`} className="security-finding">
+                  <div className="security-finding-header">
+                    <span className={`security-severity severity-${finding.severity}`}>{finding.severity}</span>
+                    <span className="security-finding-title">{finding.title}</span>
+                  </div>
+                  <div className="security-finding-summary">{finding.summary}</div>
+                  <div className="security-finding-recommendation">{finding.recommendation}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
