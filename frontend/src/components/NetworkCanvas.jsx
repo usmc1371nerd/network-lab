@@ -45,11 +45,11 @@ const DEVICE_LABELS = {
   "iot-thermostat": "IoT Thermostat",
   "iot-plug": "IoT Plug",
   "usb-storage": "Removable Storage",
-  "usb-keyboard": "USB Keyboard",
-  "usb-mouse": "USB Mouse",
-  "usb-webcam": "USB Webcam",
-  "usb-audio": "USB Audio",
-  "usb-printer": "USB Printer",
+  "usb-keyboard": "Keyboard",
+  "usb-mouse": "Mouse",
+  "usb-webcam": "Webcam",
+  "usb-audio": "Audio",
+  "usb-printer": "Printer",
 };
 const PALETTE_GROUPS = [
   {
@@ -71,6 +71,36 @@ const PALETTE_GROUPS = [
 ];
 const NODE_W = 136;
 const NODE_H = 68;
+const USB_PERIPHERAL_TYPES = new Set([
+  "usb-storage",
+  "usb-keyboard",
+  "usb-mouse",
+  "usb-webcam",
+  "usb-audio",
+  "usb-printer",
+]);
+const BLUETOOTH_TYPES = new Set([
+  "phone",
+  "laptop",
+  "beacon",
+  "sensor",
+  "gateway",
+  "iot-bulb",
+  "iot-lock",
+  "iot-tag",
+  "iot-camera",
+  "iot-thermostat",
+  "iot-plug",
+]);
+
+const normalizeTransport = (transport) => {
+  const normalized = String(transport || "").toLowerCase();
+  if (normalized === "network") return "cat";
+  if (normalized === "cat" || normalized === "wifi" || normalized === "usb" || normalized === "bluetooth") {
+    return normalized;
+  }
+  return "cat";
+};
 
 export default function NetworkCanvas({
   devices,
@@ -90,6 +120,7 @@ export default function NetworkCanvas({
   const [connectMode, setConnectMode] = useState(false);
   const [connectSource, setConnectSource] = useState(null);
   const [connectDirection, setConnectDirection] = useState("both");
+  const [connectTransport, setConnectTransport] = useState("auto");
   const [editingId, setEditingId] = useState(null);
   const [editIpValue, setEditIpValue] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState({});
@@ -175,7 +206,20 @@ export default function NetworkCanvas({
       if (!connectSource) {
         setConnectSource(device.id);
       } else if (connectSource !== device.id) {
-        onAddConnection(connectSource, device.id, connectDirection);
+        const sourceDevice = devices.find((item) => item.id === connectSource);
+        const preferredTransport = connectTransport;
+        const resolvedTransport =
+          preferredTransport !== "auto"
+            ? preferredTransport
+            : sourceDevice && device
+              ? USB_PERIPHERAL_TYPES.has(sourceDevice.type) || USB_PERIPHERAL_TYPES.has(device.type)
+                ? "usb"
+                : BLUETOOTH_TYPES.has(sourceDevice.type) || BLUETOOTH_TYPES.has(device.type)
+                  ? "bluetooth"
+                  : "cat"
+              : "cat";
+
+        onAddConnection(connectSource, device.id, connectDirection, resolvedTransport);
         setConnectSource(null);
         setConnectMode(false);
       }
@@ -273,6 +317,7 @@ export default function NetworkCanvas({
     redMaxDropPct: selectedConnection?.conditions?.redMaxDropPct ?? 30,
     blocked: selectedConnection?.conditions?.blocked ?? false,
   };
+  const selectedTransport = normalizeTransport(selectedConnection?.transport || "cat");
 
   const updateSelectedConditions = (fields) => {
     if (!selectedConnection) return;
@@ -408,6 +453,23 @@ export default function NetworkCanvas({
               {connectDirection === "forward" && "Outbound (source → target)"}
               {connectDirection === "reverse" && "Inbound (target → source)"}
             </div>
+            <div className="connect-transport-row">
+              <label className="connect-transport-label" htmlFor="connect-transport">
+                Link type
+              </label>
+              <select
+                id="connect-transport"
+                className="connect-transport-select"
+                value={connectTransport}
+                onChange={(e) => setConnectTransport(e.target.value)}
+              >
+                <option value="auto">Auto</option>
+                <option value="cat">CAT (Ethernet)</option>
+                <option value="wifi">WiFi</option>
+                <option value="usb">USB</option>
+                <option value="bluetooth">Bluetooth</option>
+              </select>
+            </div>
             <button className="btn-cancel" onClick={cancelConnect}>
               Cancel
             </button>
@@ -438,6 +500,21 @@ export default function NetworkCanvas({
                   Apply
                 </button>
               </div>
+              <label className="link-editor-field">
+                <span>Connection type</span>
+                <select
+                  className="link-editor-select"
+                  value={selectedTransport}
+                  onChange={(e) => onUpdateConnection?.(selectedConnection.from, selectedConnection.to, {
+                    transport: e.target.value,
+                  })}
+                >
+                  <option value="cat">CAT (Ethernet)</option>
+                  <option value="wifi">WiFi</option>
+                  <option value="usb">USB</option>
+                  <option value="bluetooth">Bluetooth</option>
+                </select>
+              </label>
               <label className="link-editor-field">
                 <span>Loss %</span>
                 <input
@@ -638,7 +715,15 @@ export default function NetworkCanvas({
             };
             const direction = conn.direction || "both";
             const conditions = conn.conditions || {};
-            const conditionLabel = `${conditions.lossPct || 0}% · ${conditions.latencyMs || 0}±${conditions.jitterMs || 0}ms · bw${conditions.bandwidthPps || 100}pps · q${conditions.queueLimitPkts || 200}${conditions.redEnabled ? " · RED" : ""}${conditions.blocked ? " · BLOCK" : ""}`;
+            const transportValue = normalizeTransport(conn.transport || "cat");
+            const transportClass = `transport-${transportValue}`;
+            const transportLabel = {
+              cat: "CAT",
+              wifi: "WIFI",
+              usb: "USB",
+              bluetooth: "BLUETOOTH",
+            }[transportValue] || "CAT";
+            const conditionLabel = `${transportLabel} · ${conditions.lossPct || 0}% · ${conditions.latencyMs || 0}±${conditions.jitterMs || 0}ms · bw${conditions.bandwidthPps || 100}pps · q${conditions.queueLimitPkts || 200}${conditions.redEnabled ? " · RED" : ""}${conditions.blocked ? " · BLOCK" : ""}`;
             const isSelected = selectedConnectionKey === linkKey;
 
             const dx = t.cx - s.cx;
@@ -684,8 +769,8 @@ export default function NetworkCanvas({
                     setSelectedConnectionKey(linkKey);
                   }}
                 />
-                <path d={inboundPath} className={`conn-path conn-inbound${inboundMuted ? " muted" : ""}${isSelected ? " selected" : ""}`} />
-                <path d={outboundPath} className={`conn-path conn-outbound${outboundMuted ? " muted" : ""}${isSelected ? " selected" : ""}`} />
+                <path d={inboundPath} className={`conn-path conn-inbound ${transportClass}${inboundMuted ? " muted" : ""}${isSelected ? " selected" : ""}`} />
+                <path d={outboundPath} className={`conn-path conn-outbound ${transportClass}${outboundMuted ? " muted" : ""}${isSelected ? " selected" : ""}`} />
 
                 <g
                   className="conn-info-button"

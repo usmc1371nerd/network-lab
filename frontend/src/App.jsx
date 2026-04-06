@@ -53,6 +53,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    setDevices((prev) => {
+      let changed = false;
+      const next = prev.map((device) => {
+        if (!device?.name) return device;
+        if (!device.type?.startsWith("usb-")) return device;
+        if (!device.name.startsWith("USB-")) return device;
+        changed = true;
+        return { ...device, name: device.name.replace(/^USB-/, "") };
+      });
+      return changed ? next : prev;
+    });
+  }, [devices.length]);
+
+  useEffect(() => {
     const activeKeys = new Set(connections.map((conn) => `${conn.from}->${conn.to}`));
     const nextRuntime = {};
     Object.entries(linkRuntimeRef.current).forEach(([key, runtime]) => {
@@ -80,12 +94,12 @@ export default function App() {
       "iot-camera": "IoT-Camera",
       "iot-thermostat": "IoT-Thermostat",
       "iot-plug": "IoT-Plug",
-      "usb-storage": "USB-Storage",
-      "usb-keyboard": "USB-Keyboard",
-      "usb-mouse": "USB-Mouse",
-      "usb-webcam": "USB-Webcam",
-      "usb-audio": "USB-Audio",
-      "usb-printer": "USB-Printer",
+      "usb-storage": "Storage",
+      "usb-keyboard": "Keyboard",
+      "usb-mouse": "Mouse",
+      "usb-webcam": "Webcam",
+      "usb-audio": "Audio",
+      "usb-printer": "Printer",
     };
     const id = uid();
     setDevices((prev) => [
@@ -133,19 +147,26 @@ export default function App() {
     );
   }, []);
 
-  const addConnection = useCallback((from, to, direction = "both") => {
+  const addConnection = useCallback((from, to, direction = "both", transport = "cat") => {
     setConnections((prev) => {
       const existing = prev.find(
         (c) => (c.from === from && c.to === to) || (c.from === to && c.to === from)
       );
       if (!existing) {
-        return [...prev, { from, to, direction, conditions: { ...DEFAULT_LINK_CONDITIONS } }];
+        return [...prev, {
+          from,
+          to,
+          direction,
+          transport,
+          conditions: { ...DEFAULT_LINK_CONDITIONS },
+        }];
       }
       return prev.map((c) => {
         if ((c.from === from && c.to === to) || (c.from === to && c.to === from)) {
           return {
             ...c,
             direction,
+            transport,
             conditions: { ...DEFAULT_LINK_CONDITIONS, ...(c.conditions || {}) },
           };
         }

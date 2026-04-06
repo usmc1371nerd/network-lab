@@ -232,6 +232,27 @@ button { cursor: pointer; border: none; background: none; font: inherit; }
   text-align: center;
 }
 
+.connect-transport-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.connect-transport-label {
+  font-size: 9px;
+  color: #8b949e;
+}
+
+.connect-transport-select {
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #c9d1d9;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 10px;
+}
+
 .link-editor {
   display: flex;
   flex-direction: column;
@@ -374,6 +395,20 @@ button { cursor: pointer; border: none; background: none; font: inherit; }
 
 .conn-inbound { stroke: #60a5fa; }
 .conn-outbound { stroke: #fb923c; }
+.conn-path.transport-cat.conn-inbound { stroke: #60a5fa; }
+.conn-path.transport-cat.conn-outbound { stroke: #fb923c; }
+.conn-path.transport-network.conn-inbound { stroke: #60a5fa; }
+.conn-path.transport-network.conn-outbound { stroke: #fb923c; }
+
+.conn-path.transport-wifi.conn-inbound { stroke: #22d3ee; }
+.conn-path.transport-wifi.conn-outbound { stroke: #06b6d4; }
+
+.conn-path.transport-usb.conn-inbound { stroke: #34d399; }
+.conn-path.transport-usb.conn-outbound { stroke: #10b981; }
+
+.conn-path.transport-bluetooth.conn-inbound { stroke: #a78bfa; }
+.conn-path.transport-bluetooth.conn-outbound { stroke: #8b5cf6; }
+
 .conn-path.muted { opacity: 0.25; }
 .conn-path.selected { stroke-width: 3; }
 
