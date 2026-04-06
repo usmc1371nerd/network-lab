@@ -19,11 +19,6 @@ function Get-PythonExecutable {
     return $venvPython
   }
 
-  $fallbackPython = "C:/Users/hackerdad/AppData/Local/Programs/Python/Python313/python.exe"
-  if (Test-Path $fallbackPython) {
-    return $fallbackPython
-  }
-
   return "python"
 }
 

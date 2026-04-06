@@ -36,8 +36,9 @@ Quick Start:
 
 1) Backend (Flask)
 - `cd backend`
-- `C:/Users/hackerdad/AppData/Local/Programs/Python/Python313/python.exe app.py`
+- `python app.py`
 - Backend URL: `http://localhost:5000`
+- API route: `POST /api/run-command`
 
 2) Frontend (Vite)
 - `cd frontend`
@@ -56,7 +57,7 @@ Troubleshooting:
 
 - Backend fails to start (missing Flask modules)
 	- Install required packages:
-	- `C:/Users/hackerdad/AppData/Local/Programs/Python/Python313/python.exe -m pip install flask flask-cors`
+	- `python -m pip install flask flask-cors`
 
 - Frontend command fails or missing dependencies
 	- Reinstall dependencies in `frontend`:
