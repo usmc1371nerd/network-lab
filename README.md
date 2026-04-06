@@ -27,7 +27,7 @@ Connection Types:
 Canvas Controls:
 - **Zoom**: Hold Ctrl (or Cmd on Mac) and scroll the mouse wheel to zoom in/out
 - **Pan**: Hold Spacebar and drag to move the canvas around (similar to Obsidian note-taking)
-- **Collapse Panel**: Click the toggle button (▼/◀) in the top-right header to hide/show the terminal and packet log panels, maximizing canvas space for larger topologies
+- **Terminal Toolbar**: Click the toggle button (▲/▼) at bottom-left to collapse/expand the terminal and packet log toolbar
 
 Notes:
 - A single device can connect to multiple other devices.
