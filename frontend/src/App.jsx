@@ -418,6 +418,10 @@ export default function App() {
     return { deliveredPackets, droppedPackets };
   }, [devices, connections]);
 
+  const showCapturedPackets = useCallback(() => {
+    setDisplayedPackets(capturedPackets);
+  }, [capturedPackets]);
+
   return (
     <div className="app">
       <header className="app-header">

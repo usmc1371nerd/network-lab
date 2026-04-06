@@ -116,6 +116,7 @@ export default function NetworkCanvas({
 }) {
   const canvasRef = useRef(null);
   const draggingRef = useRef(null);
+  const panRef = useRef(null);
 
   const [connectMode, setConnectMode] = useState(false);
   const [connectSource, setConnectSource] = useState(null);
@@ -132,6 +133,16 @@ export default function NetworkCanvas({
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+
+  const toWorldCoords = (clientX, clientY) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0, rect: null };
+    return {
+      x: (clientX - rect.left - canvasPan.x) / canvasScale,
+      y: (clientY - rect.top - canvasPan.y) / canvasScale,
+      rect,
+    };
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setClockMs(Date.now()), 40);
@@ -165,9 +176,9 @@ export default function NetworkCanvas({
     e.preventDefault();
     const type = e.dataTransfer.getData("deviceType");
     if (!type) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = Math.max(0, e.clientX - rect.left - NODE_W / 2);
-    const y = Math.max(0, e.clientY - rect.top - NODE_H / 2);
+    const world = toWorldCoords(e.clientX, e.clientY);
+    const x = Math.max(0, world.x - NODE_W / 2);
+    const y = Math.max(0, world.y - NODE_H / 2);
     onAddDevice(type, x, y);
   };
 
@@ -176,11 +187,11 @@ export default function NetworkCanvas({
     if (connectMode) return;
     if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
     e.stopPropagation();
-    const rect = canvasRef.current.getBoundingClientRect();
+    const world = toWorldCoords(e.clientX, e.clientY);
     draggingRef.current = {
       id: device.id,
-      offsetX: e.clientX - rect.left - device.x,
-      offsetY: e.clientY - rect.top - device.y,
+      offsetX: world.x - device.x,
+      offsetY: world.y - device.y,
     };
   };
 
@@ -190,20 +201,24 @@ export default function NetworkCanvas({
       return;
     }
     if (!draggingRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
+    const world = toWorldCoords(e.clientX, e.clientY);
+    if (!world.rect) return;
+    const maxX = Math.max(0, world.rect.width / canvasScale - NODE_W);
+    const maxY = Math.max(0, world.rect.height / canvasScale - NODE_H);
     const x = Math.max(
       0,
-      Math.min(rect.width - NODE_W, e.clientX - rect.left - draggingRef.current.offsetX)
+      Math.min(maxX, world.x - draggingRef.current.offsetX)
     );
     const y = Math.max(
       0,
-      Math.min(rect.height - NODE_H, e.clientY - rect.top - draggingRef.current.offsetY)
+      Math.min(maxY, world.y - draggingRef.current.offsetY)
     );
     onUpdateDevice(draggingRef.current.id, { x, y });
   };
 
   const onCanvasMouseUp = () => {
     draggingRef.current = null;
+    panRef.current = null;
     setIsPanning(false);
   };
 
@@ -214,42 +229,57 @@ export default function NetworkCanvas({
     const direction = e.deltaY > 0 ? -1 : 1; // Scroll down = zoom out, scroll up = zoom in
     const zoomStep = 0.1;
     const newScale = Math.max(0.3, Math.min(3, canvasScale + direction * zoomStep));
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) {
+      setCanvasScale(newScale);
+      return;
+    }
+
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const worldX = (mouseX - canvasPan.x) / canvasScale;
+    const worldY = (mouseY - canvasPan.y) / canvasScale;
+    const nextPan = {
+      x: mouseX - worldX * newScale,
+      y: mouseY - worldY * newScale,
+    };
+
     setCanvasScale(newScale);
+    setCanvasPan(nextPan);
   };
 
   const onCanvasKeyDown = (e) => {
     if (e.code === "Space") {
       e.preventDefault();
-      setIsPanning(true);
-      draggingRef.current = {
-        panStartX: 0,
-        panStartY: 0,
-        panInitialX: canvasPan.x,
-        panInitialY: canvasPan.y,
-      };
+      if (!isPanning) {
+        setIsPanning(true);
+        panRef.current = null;
+      }
     }
   };
 
   const onCanvasKeyUp = (e) => {
     if (e.code === "Space") {
       setIsPanning(false);
-      draggingRef.current = null;
+      panRef.current = null;
     }
   };
 
   const onCanvasPan = (e) => {
-    if (!isPanning || !draggingRef.current) return;
-    if (!draggingRef.current.panStartX) {
-      // First move: record starting position
-      draggingRef.current.panStartX = e.clientX;
-      draggingRef.current.panStartY = e.clientY;
-      return;
+    if (!isPanning) return;
+    if (!panRef.current) {
+      panRef.current = {
+        panStartX: e.clientX,
+        panStartY: e.clientY,
+        panInitialX: canvasPan.x,
+        panInitialY: canvasPan.y,
+      };
     }
-    const deltaX = (e.clientX - draggingRef.current.panStartX) / canvasScale;
-    const deltaY = (e.clientY - draggingRef.current.panStartY) / canvasScale;
+    const deltaX = e.clientX - panRef.current.panStartX;
+    const deltaY = e.clientY - panRef.current.panStartY;
     setCanvasPan({
-      x: draggingRef.current.panInitialX + deltaX,
-      y: draggingRef.current.panInitialY + deltaY,
+      x: panRef.current.panInitialX + deltaX,
+      y: panRef.current.panInitialY + deltaY,
     });
   };
 
@@ -727,12 +757,7 @@ export default function NetworkCanvas({
       {/* ── Canvas ── */}
       <div
         ref={canvasRef}
-        className={`canvas-area ${connectMode ? "connect-mode" : ""}`}
-        style={{
-          transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasScale})`,
-          transformOrigin: "0 0",
-          transition: isPanning ? "none" : "transform 0.05s ease-out",
-        }}
+        className={`canvas-area ${connectMode ? "connect-mode" : ""} ${isPanning ? "panning" : ""}`}
         onDrop={onCanvasDrop}
         onDragOver={(e) => e.preventDefault()}
         onMouseMove={onCanvasMouseMove}
@@ -747,6 +772,14 @@ export default function NetworkCanvas({
           setSelectedConnectionKey(null);
         }}
       >
+        <div
+          className="canvas-world"
+          style={{
+            transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasScale})`,
+            transformOrigin: "0 0",
+            transition: isPanning ? "none" : "transform 0.05s ease-out",
+          }}
+        >
         {/* SVG connection lines */}
         <svg
           style={{
@@ -983,11 +1016,11 @@ export default function NetworkCanvas({
           </div>
         ))}
 
-        {devices.length === 0 && (
-          <div className="canvas-empty">
-            ← Drag a device onto the canvas to begin
-          </div>
-        )}
+        </div>
+
+        <div className="canvas-start-hint">
+          <span>← Drag a device onto the canvas to begin</span>
+        </div>
 
         {/* Zoom/Pan hints */}
         <div className="canvas-controls-hint">
