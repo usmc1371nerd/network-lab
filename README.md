@@ -44,3 +44,20 @@ Quick Start:
 3) Build frontend
 - `cd frontend`
 - `npm run build`
+
+Troubleshooting:
+- Port already in use
+	- Backend (`5000`) or frontend (`3000`) may already be running in another terminal.
+	- Check listeners in PowerShell: `Get-NetTCPConnection -LocalPort 5000,3000 -State Listen`
+
+- Backend fails to start (missing Flask modules)
+	- Install required packages:
+	- `C:/Users/hackerdad/AppData/Local/Programs/Python/Python313/python.exe -m pip install flask flask-cors`
+
+- Frontend command fails or missing dependencies
+	- Reinstall dependencies in `frontend`:
+	- `npm install`
+
+- Running command from wrong folder
+	- Frontend commands (`npm run dev`, `npm run build`) must run in `frontend`.
+	- Backend command (`python app.py`) must run in `backend`.
