@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from "react";
-import axios from "axios";
 
 const DEFAULT_PROMPT = "lab@network:~$";
 const MAX_CAPTURE_SHOW_ROWS = 100;
@@ -176,6 +175,7 @@ const MAN_PAGES = {
 
 export default function Terminal({
   devices,
+  connections,
   packets,
   onAppendPackets,
   onClearPackets,
@@ -199,6 +199,7 @@ export default function Terminal({
   const [bleProxyGatewayId, setBleProxyGatewayId] = useState(null);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
+  const activeCommandAbortRef = useRef(null);
 
   const bluetoothDevices = devices.filter((device) => Boolean(device.btMac));
   const usbDevices = devices.filter((device) => USB_TYPES.has(device.type));
@@ -267,6 +268,22 @@ export default function Terminal({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history]);
 
+  useEffect(() => {
+    if (!loading) return undefined;
+
+    const onWindowKeyDown = (e) => {
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        if (activeCommandAbortRef.current) {
+          activeCommandAbortRef.current.abort();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+  }, [loading]);
+
   const getTerminalText = () => history.map((line) => line.text).join("\n");
 
   const copyText = async (text) => {
@@ -312,6 +329,13 @@ export default function Terminal({
   };
 
   const onTerminalKeyDown = async (e) => {
+    if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "c" && loading) {
+      e.preventDefault();
+      if (activeCommandAbortRef.current) {
+        activeCommandAbortRef.current.abort();
+      }
+      return;
+    }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c") {
       e.preventDefault();
       await copySelectionOrLog();
@@ -860,6 +884,8 @@ export default function Terminal({
     }
 
     setLoading(true);
+    const abortController = new AbortController();
+    activeCommandAbortRef.current = abortController;
     try {
       const pingByName = trimmed.match(/^ping\s+(\S+)(.*)$/i);
       let normalizedCommand = trimmed;
@@ -872,12 +898,23 @@ export default function Terminal({
         }
       }
 
-      const res = await axios.post("/api/run-command", {
-        command: normalizedCommand,
-        devices,
-        sourceDeviceId: sshProxyGateway?.id || sshSessionDevice?.id || null,
+      const response = await fetch("/api/run-command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: normalizedCommand,
+          devices,
+          connections,
+          sourceDeviceId: sshProxyGateway?.id || sshSessionDevice?.id || null,
+        }),
+        signal: abortController.signal,
       });
-      const { output = [], packets: generatedPackets = [] } = res.data;
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const { output = [], packets: generatedPackets = [] } = await response.json();
       pushLines(output);
       if (generatedPackets.length > 0) {
         const result = onTrafficGenerated?.(generatedPackets);
@@ -901,13 +938,27 @@ export default function Terminal({
         }
       }
     } catch (err) {
-      pushLines([`Error: ${err.message}`], "error");
+      if (err?.name === "AbortError") {
+        pushLines(["^C", "command interrupted"], "error");
+      } else {
+        pushLines([`Error: ${err.message}`], "error");
+      }
     } finally {
+      if (activeCommandAbortRef.current === abortController) {
+        activeCommandAbortRef.current = null;
+      }
       setLoading(false);
     }
   };
 
   const onKeyDown = (e) => {
+    if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "c" && loading) {
+      e.preventDefault();
+      if (activeCommandAbortRef.current) {
+        activeCommandAbortRef.current.abort();
+      }
+      return;
+    }
     if (e.key === "Enter") {
       runCommand(input);
       setInput("");

@@ -464,6 +464,7 @@ export default function App() {
               <div className="panel-label">TERMINAL</div>
               <Terminal
                 devices={devices}
+                connections={connections}
                 packets={capturedPackets}
                 onAppendPackets={appendCapturedPackets}
                 onClearPackets={clearCapturedPackets}

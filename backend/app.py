@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import random
 import math
+from collections import deque
 
 app = Flask(__name__)
 CORS(app)
@@ -28,11 +29,69 @@ def parse_ping_count(parts):
     return max(1, min(count, 20))
 
 
+def can_traverse(conn, src_id, dst_id):
+    direction = (conn.get("direction") or "both").lower()
+    conn_from = str(conn.get("from"))
+    conn_to = str(conn.get("to"))
+    src_id = str(src_id)
+    dst_id = str(dst_id)
+
+    if conn_from == src_id and conn_to == dst_id:
+        return direction in ("both", "forward")
+    if conn_from == dst_id and conn_to == src_id:
+        return direction in ("both", "reverse")
+    return False
+
+
+def find_path(device_ids, connections, start_id, target_id):
+    start_id = str(start_id)
+    target_id = str(target_id)
+    if start_id == target_id:
+        return [start_id]
+
+    graph = {str(device_id): [] for device_id in device_ids}
+
+    for conn in connections:
+        conn_from = str(conn.get("from"))
+        conn_to = str(conn.get("to"))
+        if conn_from not in graph or conn_to not in graph:
+            continue
+        if can_traverse(conn, conn_from, conn_to):
+            graph[conn_from].append(conn_to)
+        if can_traverse(conn, conn_to, conn_from):
+            graph[conn_to].append(conn_from)
+
+    queue = deque([start_id])
+    parent = {start_id: None}
+
+    while queue:
+        current = queue.popleft()
+        if current == target_id:
+            break
+        for neighbor in graph.get(current, []):
+            if neighbor in parent:
+                continue
+            parent[neighbor] = current
+            queue.append(neighbor)
+
+    if target_id not in parent:
+        return None
+
+    path = []
+    cursor = target_id
+    while cursor is not None:
+        path.append(cursor)
+        cursor = parent[cursor]
+    path.reverse()
+    return path
+
+
 @app.route("/api/run-command", methods=["POST"])
 def run_command():
     data = request.json
     command = (data.get("command") or "").strip()
     devices = data.get("devices", [])
+    connections = data.get("connections", [])
     source_device_id = str(data.get("sourceDeviceId")) if data.get("sourceDeviceId") is not None else None
 
     parts = command.split()
@@ -52,6 +111,7 @@ def run_command():
     if cmd == "ping" and len(parts) >= 2:
         target_ip = parts[1]
         count = parse_ping_count(parts)
+        devices_by_id = {str(device.get("id")): device for device in devices}
 
         ip_devices = [d for d in devices if d.get("ip")]
         source = None
@@ -77,18 +137,39 @@ def run_command():
         output_lines.append(f"PING {target_ip} ({target_ip}) 56(84) bytes of data.")
 
         if target:
+            path = find_path(
+                device_ids=[str(device.get("id")) for device in devices if device.get("id") is not None],
+                connections=connections,
+                start_id=str(source.get("id")) if source else "",
+                target_id=str(target.get("id")),
+            )
+
+            if not path:
+                output_lines += [
+                    f"From {src_ip} Destination Host Unreachable (no route in topology)",
+                    "",
+                    f"--- {target_ip} ping statistics ---",
+                    f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
+                ]
+                return jsonify({"output": output_lines, "packets": packets})
+
+            hop_names = [devices_by_id.get(path_id, {}).get("name", path_id) for path_id in path]
+            output_lines.append(f"route: {' -> '.join(hop_names)}")
+
             # ARP resolution
+            first_hop_device = devices_by_id.get(path[1], target) if len(path) > 1 else target
+            first_hop_ip = first_hop_device.get("ip") or target_ip
             packets.append({
                 "no": next_no(), "time": 0.0,
                 "src": src_mac, "dst": "ff:ff:ff:ff:ff:ff",
                 "protocol": "ARP", "len": 42,
-                "info": f"Who has {target_ip}?  Tell {src_ip}"
+                "info": f"Who has {first_hop_ip}?  Tell {src_ip}"
             })
             packets.append({
                 "no": next_no(), "time": round(random.uniform(0.0005, 0.002), 4),
                 "src": dst_mac, "dst": src_mac,
                 "protocol": "ARP", "len": 42,
-                "info": f"{target_ip} is at {dst_mac}"
+                "info": f"{first_hop_ip} is at {dst_mac}"
             })
 
             rtt_samples = []
@@ -96,18 +177,34 @@ def run_command():
                 base = round(seq * 0.05 + random.uniform(0, 0.005), 4)
                 rtt_ms = round(random.uniform(0.4, 2.5), 2)
                 rtt_samples.append(rtt_ms)
-                packets.append({
-                    "no": next_no(), "time": base,
-                    "src": src_ip, "dst": target_ip,
-                    "protocol": "ICMP", "len": 74,
-                    "info": f"Echo (ping) request  id=0x0001, seq={seq}/256, ttl=64"
-                })
-                packets.append({
-                    "no": next_no(), "time": round(base + rtt_ms / 1000, 4),
-                    "src": target_ip, "dst": src_ip,
-                    "protocol": "ICMP", "len": 74,
-                    "info": f"Echo (ping) reply    id=0x0001, seq={seq}/256, ttl=64 (request in {pkt_counter[0]-1})"
-                })
+
+                request_hops = max(1, len(path) - 1)
+                for hop_index in range(request_hops):
+                    hop_from = devices_by_id.get(path[hop_index], {})
+                    hop_to = devices_by_id.get(path[hop_index + 1], {})
+                    hop_time = round(base + hop_index * 0.0015, 4)
+                    packets.append({
+                        "no": next_no(), "time": hop_time,
+                        "src": hop_from.get("ip") or hop_from.get("name") or src_ip,
+                        "dst": hop_to.get("ip") or hop_to.get("name") or target_ip,
+                        "protocol": "ICMP", "len": 74,
+                        "info": f"Echo (ping) request  id=0x0001, seq={seq}/256, ttl={max(1, 64 - hop_index)} hop {hop_index + 1}/{request_hops}"
+                    })
+
+                reverse_path = list(reversed(path))
+                reply_hops = max(1, len(reverse_path) - 1)
+                for hop_index in range(reply_hops):
+                    hop_from = devices_by_id.get(reverse_path[hop_index], {})
+                    hop_to = devices_by_id.get(reverse_path[hop_index + 1], {})
+                    hop_time = round(base + rtt_ms / 1000 + hop_index * 0.0015, 4)
+                    packets.append({
+                        "no": next_no(), "time": hop_time,
+                        "src": hop_from.get("ip") or hop_from.get("name") or target_ip,
+                        "dst": hop_to.get("ip") or hop_to.get("name") or src_ip,
+                        "protocol": "ICMP", "len": 74,
+                        "info": f"Echo (ping) reply    id=0x0001, seq={seq}/256, ttl={max(1, 64 - hop_index)} hop {hop_index + 1}/{reply_hops}"
+                    })
+
                 output_lines.append(
                     f"64 bytes from {target_ip}: icmp_seq={seq} ttl=64 time={rtt_ms:.2f} ms"
                 )
