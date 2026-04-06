@@ -129,6 +129,9 @@ export default function NetworkCanvas({
   const [linkPreset, setLinkPreset] = useState("stable");
   const [clockMs, setClockMs] = useState(Date.now());
   const [securityInspector, setSecurityInspector] = useState(null);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setClockMs(Date.now()), 40);
@@ -182,6 +185,10 @@ export default function NetworkCanvas({
   };
 
   const onCanvasMouseMove = (e) => {
+    if (isPanning) {
+      onCanvasPan(e);
+      return;
+    }
     if (!draggingRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const x = Math.max(
@@ -197,6 +204,53 @@ export default function NetworkCanvas({
 
   const onCanvasMouseUp = () => {
     draggingRef.current = null;
+    setIsPanning(false);
+  };
+
+  /* ── canvas zoom & pan ────────────────────────────────────── */
+  const onCanvasWheel = (e) => {
+    if (!e.ctrlKey && !e.metaKey) return; // Only zoom with Ctrl/Cmd held
+    e.preventDefault();
+    const direction = e.deltaY > 0 ? -1 : 1; // Scroll down = zoom out, scroll up = zoom in
+    const zoomStep = 0.1;
+    const newScale = Math.max(0.3, Math.min(3, canvasScale + direction * zoomStep));
+    setCanvasScale(newScale);
+  };
+
+  const onCanvasKeyDown = (e) => {
+    if (e.code === "Space") {
+      e.preventDefault();
+      setIsPanning(true);
+      draggingRef.current = {
+        panStartX: 0,
+        panStartY: 0,
+        panInitialX: canvasPan.x,
+        panInitialY: canvasPan.y,
+      };
+    }
+  };
+
+  const onCanvasKeyUp = (e) => {
+    if (e.code === "Space") {
+      setIsPanning(false);
+      draggingRef.current = null;
+    }
+  };
+
+  const onCanvasPan = (e) => {
+    if (!isPanning || !draggingRef.current) return;
+    if (!draggingRef.current.panStartX) {
+      // First move: record starting position
+      draggingRef.current.panStartX = e.clientX;
+      draggingRef.current.panStartY = e.clientY;
+      return;
+    }
+    const deltaX = (e.clientX - draggingRef.current.panStartX) / canvasScale;
+    const deltaY = (e.clientY - draggingRef.current.panStartY) / canvasScale;
+    setCanvasPan({
+      x: draggingRef.current.panInitialX + deltaX,
+      y: draggingRef.current.panInitialY + deltaY,
+    });
   };
 
   /* ── device click ─────────────────────────────────────────── */
@@ -674,11 +728,20 @@ export default function NetworkCanvas({
       <div
         ref={canvasRef}
         className={`canvas-area ${connectMode ? "connect-mode" : ""}`}
+        style={{
+          transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasScale})`,
+          transformOrigin: "0 0",
+          transition: isPanning ? "none" : "transform 0.05s ease-out",
+        }}
         onDrop={onCanvasDrop}
         onDragOver={(e) => e.preventDefault()}
         onMouseMove={onCanvasMouseMove}
         onMouseUp={onCanvasMouseUp}
         onMouseLeave={onCanvasMouseUp}
+        onWheel={onCanvasWheel}
+        onKeyDown={onCanvasKeyDown}
+        onKeyUp={onCanvasKeyUp}
+        tabIndex={0}
         onClick={() => {
           setEditingId(null);
           setSelectedConnectionKey(null);
@@ -925,6 +988,11 @@ export default function NetworkCanvas({
             ← Drag a device onto the canvas to begin
           </div>
         )}
+
+        {/* Zoom/Pan hints */}
+        <div className="canvas-controls-hint">
+          <span>Ctrl+Scroll to zoom • Space+Drag to pan</span>
+        </div>
 
         {securityInspector && (
           <div

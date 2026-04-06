@@ -42,6 +42,7 @@ export default function App() {
   const [trafficStats, setTrafficStats] = useState({});
   const [linkTrafficStats, setLinkTrafficStats] = useState({});
   const [packetFlights, setPacketFlights] = useState([]);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const linkRuntimeRef = useRef({});
   const flightTimeoutsRef = useRef([]);
 
@@ -427,44 +428,35 @@ export default function App() {
         <span className="app-logo">⬡</span>
         <h1 className="app-title">Network Lab</h1>
         <span className="app-subtitle">Interactive Network Simulator</span>
+        <button
+          className="header-panel-toggle"
+          onClick={() => setRightPanelOpen((prev) => !prev)}
+          title={rightPanelOpen ? "Hide terminal & packet log" : "Show terminal & packet log"}
+        >
+          {rightPanelOpen ? "▼" : "◀"}
+        </button>
       </header>
 
-      <div className="app-body">
-        <div className="panel panel-canvas">
-          <div className="panel-label">TOPOLOGY</div>
-          <NetworkCanvas
-            devices={devices}
-            connections={connections}
-            trafficStats={trafficStats}
-            linkTrafficStats={linkTrafficStats}
-            packetFlights={packetFlights}
-            onAddDevice={addDevice}
-            onUpdateDevice={updateDevice}
-            onRemoveDevice={removeDevice}
-            onAddConnection={addConnection}
-            onUpdateConnection={updateConnection}
-          />
-        </div>
+        {rightPanelOpen && (
+          <div className="panel-right">
+            <div className="panel panel-terminal">
+              <div className="panel-label">TERMINAL</div>
+              <Terminal
+                devices={devices}
+                packets={capturedPackets}
+                onAppendPackets={appendCapturedPackets}
+                onClearPackets={clearCapturedPackets}
+                onShowPackets={showCapturedPackets}
+                onTrafficGenerated={applyTrafficPackets}
+              />
+            </div>
 
-        <div className="panel-right">
-          <div className="panel panel-terminal">
-            <div className="panel-label">TERMINAL</div>
-            <Terminal
-              devices={devices}
-              packets={capturedPackets}
-              onAppendPackets={appendCapturedPackets}
-              onClearPackets={clearCapturedPackets}
-              onShowPackets={showCapturedPackets}
-              onTrafficGenerated={applyTrafficPackets}
-            />
+            <div className="panel panel-packetlog">
+              <div className="panel-label">PACKET LOG</div>
+              <PacketLog packets={displayedPackets} />
+            </div>
           </div>
-
-          <div className="panel panel-packetlog">
-            <div className="panel-label">PACKET LOG</div>
-            <PacketLog packets={displayedPackets} />
-          </div>
-        </div>
-      </div>
+        )}
     </div>
   );
 }
