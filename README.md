@@ -30,6 +30,10 @@ Notes:
 - Existing legacy `network` links are treated as CAT/Ethernet.
 
 Quick Start:
+0) One-command startup (PowerShell)
+- From project root:
+- `./dev-start.ps1`
+
 1) Backend (Flask)
 - `cd backend`
 - `C:/Users/hackerdad/AppData/Local/Programs/Python/Python313/python.exe app.py`
