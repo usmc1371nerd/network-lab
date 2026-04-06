@@ -30,28 +30,12 @@ button { cursor: pointer; border: none; background: none; font: inherit; }
 .app-title { font-size: 17px; font-weight: 700; color: #f0f6fc; letter-spacing: 0.02em; }
 .app-subtitle { font-size: 12px; color: #6e7681; margin-left: 4px; }
 
-.header-panel-toggle {
-  margin-left: auto;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: #8b949e;
-  background: transparent;
-  border: 1px solid #30363d;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.header-panel-toggle:hover {
-  background: #30363d;
-  color: #c9d1d9;
-  border-color: #58a6ff;
-}
-
 .app-body {
   display: flex;
   flex: 1;
   overflow: hidden;
   gap: 0;
+  flex-direction: column;
 }
 
 /* ── Panel layout ─────────────────────────────────────────────── */
@@ -65,18 +49,58 @@ button { cursor: pointer; border: none; background: none; font: inherit; }
 .panel-canvas {
   flex: 1;
   min-width: 0;
-}
-
-.panel-right {
-  width: 420px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid #30363d;
   overflow: hidden;
 }
 
-.panel-terminal { flex: 1; border-bottom: 1px solid #30363d; overflow: hidden; }
+.panel-bottom {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #30363d;
+  background: #161b22;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: height 0.3s ease-out;
+}
+
+.panel-bottom.collapsed {
+  height: 32px;
+}
+
+.panel-bottom.expanded {
+  height: 280px;
+}
+
+.panel-bottom-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 14px;
+  color: #8b949e;
+  background: transparent;
+  border: none;
+  border-right: 1px solid #30363d;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.panel-bottom-toggle:hover {
+  background: #30363d;
+  color: #c9d1d9;
+}
+
+.panel-bottom-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  flex-direction: row;
+  gap: 0;
+}
+
+.panel-terminal { flex: 1; border-right: 1px solid #30363d; overflow: hidden; }
 .panel-packetlog { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 
 .panel-label {
