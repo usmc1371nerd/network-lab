@@ -24,6 +24,11 @@ Connection Types:
 - USB
 - Bluetooth
 
+Canvas Controls:
+- **Zoom**: Hold Ctrl (or Cmd on Mac) and scroll the mouse wheel to zoom in/out
+- **Pan**: Hold Spacebar and drag to move the canvas around (similar to Obsidian note-taking)
+- **Collapse Panel**: Click the toggle button (▼/◀) in the top-right header to hide/show the terminal and packet log panels, maximizing canvas space for larger topologies
+
 Notes:
 - A single device can connect to multiple other devices.
 - Link type is selectable when creating a connection and editable later from the Link panel.
