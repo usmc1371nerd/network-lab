@@ -189,8 +189,8 @@ export default function NetworkCanvas({
     const type = e.dataTransfer.getData("deviceType");
     if (!type) return;
     const world = toWorldCoords(e.clientX, e.clientY);
-    const x = Math.max(0, world.x - NODE_W / 2);
-    const y = Math.max(0, world.y - NODE_H / 2);
+    const x = world.x - NODE_W / 2;
+    const y = world.y - NODE_H / 2;
     onAddDevice(type, x, y);
   };
 
@@ -214,17 +214,8 @@ export default function NetworkCanvas({
     }
     if (!draggingRef.current) return;
     const world = toWorldCoords(e.clientX, e.clientY);
-    if (!world.rect) return;
-    const maxX = Math.max(0, world.rect.width / canvasScale - NODE_W);
-    const maxY = Math.max(0, world.rect.height / canvasScale - NODE_H);
-    const x = Math.max(
-      0,
-      Math.min(maxX, world.x - draggingRef.current.offsetX)
-    );
-    const y = Math.max(
-      0,
-      Math.min(maxY, world.y - draggingRef.current.offsetY)
-    );
+    const x = world.x - draggingRef.current.offsetX;
+    const y = world.y - draggingRef.current.offsetY;
     onUpdateDevice(draggingRef.current.id, { x, y });
   };
 
