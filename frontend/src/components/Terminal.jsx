@@ -284,40 +284,6 @@ export default function Terminal({
     return `${ip}/${prefix}`;
   };
 
-  const routePrefixLen = (network) => {
-    const normalized = normalizeCidr(network);
-    if (!normalized) return -1;
-    return Number(normalized.split("/")[1]);
-  };
-
-  const ipToInt = (ip) => {
-    const parsed = parseIpv4(ip);
-    if (!parsed) return null;
-    return parsed.split(".").reduce((acc, octet) => (acc << 8) + Number(octet), 0) >>> 0;
-  };
-
-  const connectedNetworkForHost = (host) => {
-    const ip = parseIpv4(host?.ip);
-    if (!ip) return null;
-    const [a, b, c] = ip.split(".");
-    return `${a}.${b}.${c}.0/24`;
-  };
-
-  const effectiveRoutesForHost = (host) => {
-    if (!host) return [];
-    const connected = connectedNetworkForHost(host);
-    const staticRoutes = Array.isArray(host.routes) ? host.routes : [];
-    const normalizedStatic = staticRoutes
-      .map((route) => ({
-        network: normalizeCidr(route.network),
-        via: parseIpv4(route.via),
-      }))
-      .filter((route) => route.network && route.via)
-      .sort((left, right) => routePrefixLen(right.network) - routePrefixLen(left.network));
-    const connectedEntry = connected ? [{ network: connected, via: null, connected: true }] : [];
-    return [...connectedEntry, ...normalizedStatic];
-  };
-
   useEffect(() => {
     if (sshSessionDeviceId && !sshSessionDevice) {
       setSshSessionDeviceId(null);
@@ -712,21 +678,6 @@ export default function Terminal({
         });
         pushLines(lines);
       }
-      return;
-    }
-
-    if (trimmed === "show ip route" || trimmed === "ip route") {
-      if (!sshSessionDevice) {
-        pushLines(["ip route: run this command from an ssh host context"], "error");
-        return;
-      }
-      const rows = effectiveRoutesForHost(sshSessionDevice).map((route) => {
-        if (route.connected) {
-          return `${route.network} dev eth0 scope link`;
-        }
-        return `${route.network} via ${route.via} dev eth0`;
-      });
-      pushLines(rows.length === 0 ? ["No routes configured."] : rows, "info");
       return;
     }
 
