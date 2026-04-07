@@ -72,6 +72,15 @@ const MAN_PAGES = {
     "SYNOPSIS",
     "    arp -a",
   ],
+  "show mac-address-table": [
+    "SHOW-MAC-ADDRESS-TABLE(8)",
+    "",
+    "NAME",
+    "    show mac-address-table - display learned MAC table on active switch",
+    "",
+    "SYNOPSIS",
+    "    show mac-address-table",
+  ],
   lsusb: [
     "LSUSB(8)",
     "",
@@ -765,6 +774,36 @@ export default function Terminal({
       return;
     }
 
+    if (trimmed === "show mac-address-table") {
+      if (!sshSessionDevice) {
+        pushLines(["show mac-address-table: run this command from an ssh switch context"], "error");
+        return;
+      }
+      if (String(sshSessionDevice.type || "").toLowerCase() !== "switch") {
+        pushLines([`show mac-address-table: ${sshSessionDevice.name} is not a switch`], "error");
+        return;
+      }
+      const table = sshSessionDevice.mac_table || {};
+      const entries = Object.entries(table)
+        .filter(([mac, port]) => Boolean(mac) && Boolean(port))
+        .sort((a, b) => a[0].localeCompare(b[0]));
+      if (entries.length === 0) {
+        pushLines([
+          `${sshSessionDevice.name} MAC Address Table`,
+          "(empty)",
+        ], "info");
+      } else {
+        const rows = [
+          `${sshSessionDevice.name} MAC Address Table`,
+          "",
+          "MAC Address        Port",
+          ...entries.map(([mac, port]) => `${mac.padEnd(18, " ")}${port}`),
+        ];
+        pushLines(rows, "info");
+      }
+      return;
+    }
+
     if (trimmed === "lsusb") {
       if (!currentSshHost) {
         pushLines(["lsusb: not attached to a host — ssh into a device first"], "error");
@@ -1005,6 +1044,7 @@ export default function Terminal({
         "  ip route add <net> via <gw> - add static route",
         "  ip route delete <net>    - remove static route",
         "  ip neigh | arp -a        - show neighbor table",
+        "  show mac-address-table   - show learned switch MAC entries",
         "  lsusb                    - list USB/peripheral devices",
         "  lsblk                    - list block/removable storage",
         "  dmesg | dmesg | tail     - show kernel device logs",
@@ -1063,7 +1103,19 @@ export default function Terminal({
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const { output = [], packets: generatedPackets = [] } = await response.json();
+      const { output = [], packets: generatedPackets = [], deviceUpdates = [] } = await response.json();
+      if (Array.isArray(deviceUpdates) && deviceUpdates.length > 0) {
+        deviceUpdates.forEach((update) => {
+          if (!update?.id) return;
+          const fields = {};
+          if (update.mac_table && typeof update.mac_table === "object") {
+            fields.mac_table = update.mac_table;
+          }
+          if (Object.keys(fields).length > 0) {
+            onUpdateDevice?.(update.id, fields);
+          }
+        });
+      }
       pushLines(output);
       if (generatedPackets.length > 0) {
         const result = onTrafficGenerated?.(generatedPackets);

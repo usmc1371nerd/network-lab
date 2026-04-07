@@ -32,6 +32,17 @@ const makeBtMac = () =>
   Array.from({ length: 6 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0"))
     .join(":");
 
+const makeStableMac = (seed) => {
+  const text = String(seed ?? "0");
+  let hash = 2166136261;
+  for (const ch of text) {
+    hash ^= ch.charCodeAt(0);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  const bytes = [0x02, 0x00, 0x00, (hash >>> 16) & 0xff, (hash >>> 8) & 0xff, hash & 0xff];
+  return bytes.map((byte) => byte.toString(16).padStart(2, "0")).join(":");
+};
+
 const DEFAULT_LINK_CONDITIONS = {
   lossPct: 0,
   latencyMs: 0,
@@ -94,6 +105,26 @@ export default function App() {
   }, [devices]);
 
   useEffect(() => {
+    setDevices((prev) => {
+      let changed = false;
+      const next = prev.map((device) => {
+        if (!device) return device;
+        const patch = {};
+        if (!device.mac && !NON_IP_CAPABLE_TYPES.has(device.type)) {
+          patch.mac = makeStableMac(device.id || device.name || device.type);
+        }
+        if (device.type === "switch" && (typeof device.mac_table !== "object" || device.mac_table === null)) {
+          patch.mac_table = {};
+        }
+        if (Object.keys(patch).length === 0) return device;
+        changed = true;
+        return { ...device, ...patch };
+      });
+      return changed ? next : prev;
+    });
+  }, [devices]);
+
+  useEffect(() => {
     const activeKeys = new Set(connections.map((conn) => `${conn.from}->${conn.to}`));
     const nextRuntime = {};
     Object.entries(linkRuntimeRef.current).forEach(([key, runtime]) => {
@@ -137,6 +168,8 @@ export default function App() {
         name: `${names[type] || type}-${id}`,
         ip: "",
         routes: [],
+        mac: NON_IP_CAPABLE_TYPES.has(type) ? "" : makeStableMac(id),
+        mac_table: type === "switch" ? {} : undefined,
         btMac: BLUETOOTH_TYPES.has(type) ? makeBtMac() : "",
         x,
         y,
