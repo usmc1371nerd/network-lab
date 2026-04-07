@@ -5,6 +5,20 @@ import random
 import math
 from collections import deque
 
+NON_PINGABLE_TYPES = {
+    "usb-storage",
+    "usb-keyboard",
+    "usb-mouse",
+    "usb-webcam",
+    "usb-audio",
+    "usb-printer",
+    "beacon",
+    "sensor",
+    "iot-tag",
+}
+
+FORWARDING_TYPES = {"switch", "router", "gateway"}
+
 app = Flask(__name__)
 CORS(app)
 
@@ -29,6 +43,35 @@ def parse_ping_count(parts):
     return max(1, min(count, 20))
 
 
+def find_device_by_token(devices, token):
+    normalized = str(token or "").strip().lower()
+    if not normalized:
+        return None
+    for device in devices:
+        if str(device.get("id", "")).lower() == normalized:
+            return device
+        if str(device.get("name", "")).lower() == normalized:
+            return device
+        if str(device.get("ip", "")).lower() == normalized:
+            return device
+    return None
+
+
+def is_ping_capable(device):
+    if not device:
+        return False
+    device_type = str(device.get("type") or "").lower()
+    if device_type in NON_PINGABLE_TYPES:
+        return False
+    return True
+
+
+def is_forwarding_device(device):
+    if not device:
+        return False
+    return str(device.get("type") or "").lower() in FORWARDING_TYPES
+
+
 def can_traverse(conn, src_id, dst_id):
     direction = (conn.get("direction") or "both").lower()
     conn_from = str(conn.get("from"))
@@ -43,7 +86,7 @@ def can_traverse(conn, src_id, dst_id):
     return False
 
 
-def find_path(device_ids, connections, start_id, target_id):
+def find_path(device_ids, connections, start_id, target_id, devices_by_id):
     start_id = str(start_id)
     target_id = str(target_id)
     if start_id == target_id:
@@ -68,6 +111,10 @@ def find_path(device_ids, connections, start_id, target_id):
         current = queue.popleft()
         if current == target_id:
             break
+
+        if current != start_id and current != target_id and not is_forwarding_device(devices_by_id.get(current)):
+            continue
+
         for neighbor in graph.get(current, []):
             if neighbor in parent:
                 continue
@@ -109,15 +156,49 @@ def run_command():
     cmd = parts[0].lower()
 
     if cmd == "ping" and len(parts) >= 2:
-        target_ip = parts[1]
+        target_token = parts[1]
         count = parse_ping_count(parts)
         devices_by_id = {str(device.get("id")): device for device in devices}
+        target_device = find_device_by_token(devices, target_token)
 
         ip_devices = [d for d in devices if d.get("ip")]
         source = None
         if source_device_id:
-            source = next((d for d in ip_devices if str(d.get("id")) == source_device_id), None)
-        target = next((d for d in ip_devices if d.get("ip") == target_ip), None)
+            source = devices_by_id.get(source_device_id)
+
+        if source and not is_ping_capable(source):
+            output_lines = [
+                f"ping: source '{source.get('name')}' does not support ICMP/IP",
+                "hint: start ping from an IP-capable host (pc/server/router/gateway/laptop/phone)",
+            ]
+            return jsonify({"output": output_lines, "packets": []})
+
+        if source and not source.get("ip"):
+            output_lines = [f"ping: source '{source.get('name')}' has no IP configured"]
+            return jsonify({"output": output_lines, "packets": []})
+
+        target = target_device if target_device and target_device.get("ip") else None
+        target_ip = target.get("ip") if target else target_token
+
+        if target_device and not is_ping_capable(target_device):
+            output_lines = [
+                f"PING {target_device.get('name')} ({target_token}) 56(84) bytes of data.",
+                f"ping: {target_device.get('name')}: target is a peripheral/non-IP endpoint",
+                "",
+                f"--- {target_device.get('name')} ping statistics ---",
+                f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
+            ]
+            return jsonify({"output": output_lines, "packets": []})
+
+        if target_device and not target_device.get("ip"):
+            output_lines = [
+                f"PING {target_device.get('name')} ({target_token}) 56(84) bytes of data.",
+                f"ping: {target_device.get('name')}: target has no IP configured",
+                "",
+                f"--- {target_device.get('name')} ping statistics ---",
+                f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
+            ]
+            return jsonify({"output": output_lines, "packets": []})
 
         if not source:
             if target:
@@ -142,6 +223,7 @@ def run_command():
                 connections=connections,
                 start_id=str(source.get("id")) if source else "",
                 target_id=str(target.get("id")),
+                devices_by_id=devices_by_id,
             )
 
             if not path:

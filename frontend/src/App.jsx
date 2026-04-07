@@ -16,6 +16,17 @@ const BLUETOOTH_TYPES = new Set([
   "iot-lock",
   "iot-tag",
 ]);
+const NON_IP_CAPABLE_TYPES = new Set([
+  "usb-storage",
+  "usb-keyboard",
+  "usb-mouse",
+  "usb-webcam",
+  "usb-audio",
+  "usb-printer",
+  "beacon",
+  "sensor",
+  "iot-tag",
+]);
 
 const makeBtMac = () =>
   Array.from({ length: 6 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0"))
@@ -40,6 +51,7 @@ export default function App() {
   const [capturedPackets, setCapturedPackets] = useState([]);
   const [displayedPackets, setDisplayedPackets] = useState([]);
   const [trafficStats, setTrafficStats] = useState({});
+  const [ipTrafficStats, setIpTrafficStats] = useState({});
   const [linkTrafficStats, setLinkTrafficStats] = useState({});
   const [packetFlights, setPacketFlights] = useState([]);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -66,6 +78,20 @@ export default function App() {
       return changed ? next : prev;
     });
   }, [devices.length]);
+
+  useEffect(() => {
+    setDevices((prev) => {
+      let changed = false;
+      const next = prev.map((device) => {
+        if (!device) return device;
+        if (!NON_IP_CAPABLE_TYPES.has(device.type)) return device;
+        if (!device.ip) return device;
+        changed = true;
+        return { ...device, ip: "" };
+      });
+      return changed ? next : prev;
+    });
+  }, [devices]);
 
   useEffect(() => {
     const activeKeys = new Set(connections.map((conn) => `${conn.from}->${conn.to}`));
@@ -129,6 +155,11 @@ export default function App() {
       prev.filter((c) => c.from !== id && c.to !== id)
     );
     setTrafficStats((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setIpTrafficStats((prev) => {
       const next = { ...prev };
       delete next[id];
       return next;
@@ -248,6 +279,8 @@ export default function App() {
           (c.from === srcId && c.to === dstId) ||
           (c.from === dstId && c.to === srcId)
       );
+      const protocol = String(packet.protocol || "").toUpperCase();
+      const isIpTraffic = ["ICMP", "ARP", "TCP", "UDP", "IP", "IPV6"].includes(protocol);
 
       const dropPacket = (reason, linkKey, blocked = false, queue = false, red = false) => {
         droppedPackets.push({
@@ -342,7 +375,7 @@ export default function App() {
       };
 
       deliveredPackets.push(delayedPacket);
-      trafficIncrements.push({ srcId, dstId });
+      trafficIncrements.push({ srcId, dstId, isIpTraffic });
       linkIncrements.push({
         type: "flow",
         key: linkKey,
@@ -374,6 +407,20 @@ export default function App() {
       const next = { ...prev };
 
       trafficIncrements.forEach(({ srcId, dstId }) => {
+        const prevSrc = next[srcId] || { inbound: 0, outbound: 0 };
+        next[srcId] = { ...prevSrc, outbound: prevSrc.outbound + 1 };
+        const prevDst = next[dstId] || { inbound: 0, outbound: 0 };
+        next[dstId] = { ...prevDst, inbound: prevDst.inbound + 1 };
+      });
+
+      return next;
+    });
+
+    setIpTrafficStats((prev) => {
+      const next = { ...prev };
+
+      trafficIncrements.forEach(({ srcId, dstId, isIpTraffic }) => {
+        if (!isIpTraffic) return;
         const prevSrc = next[srcId] || { inbound: 0, outbound: 0 };
         next[srcId] = { ...prevSrc, outbound: prevSrc.outbound + 1 };
         const prevDst = next[dstId] || { inbound: 0, outbound: 0 };
@@ -437,6 +484,7 @@ export default function App() {
             devices={devices}
             connections={connections}
             trafficStats={trafficStats}
+            ipTrafficStats={ipTrafficStats}
             linkTrafficStats={linkTrafficStats}
             packetFlights={packetFlights}
             onAddDevice={addDevice}

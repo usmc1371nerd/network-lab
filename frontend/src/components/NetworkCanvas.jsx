@@ -79,6 +79,17 @@ const USB_PERIPHERAL_TYPES = new Set([
   "usb-audio",
   "usb-printer",
 ]);
+const NON_IP_CAPABLE_TYPES = new Set([
+  "usb-storage",
+  "usb-keyboard",
+  "usb-mouse",
+  "usb-webcam",
+  "usb-audio",
+  "usb-printer",
+  "beacon",
+  "sensor",
+  "iot-tag",
+]);
 const BLUETOOTH_TYPES = new Set([
   "phone",
   "laptop",
@@ -106,6 +117,7 @@ export default function NetworkCanvas({
   devices,
   connections,
   trafficStats,
+  ipTrafficStats,
   linkTrafficStats,
   packetFlights,
   onAddDevice,
@@ -309,11 +321,20 @@ export default function NetworkCanvas({
       }
       return;
     }
+    if (NON_IP_CAPABLE_TYPES.has(device.type)) {
+      setEditingId(null);
+      return;
+    }
     setEditingId(device.id);
     setEditIpValue(device.ip || "");
   };
 
   const commitIp = (id) => {
+    const targetDevice = devices.find((device) => device.id === id);
+    if (!targetDevice || NON_IP_CAPABLE_TYPES.has(targetDevice.type)) {
+      setEditingId(null);
+      return;
+    }
     onUpdateDevice(id, { ip: editIpValue.trim() });
     setEditingId(null);
   };
@@ -981,11 +1002,25 @@ export default function NetworkCanvas({
             <span className="device-icon">{DEVICE_ICONS[device.type]}</span>
             <div className="device-info">
               <div className="device-name">{device.name}</div>
-              <div className="device-traffic">
-                <span className="traffic-out">↑ {(trafficStats?.[device.id]?.outbound) || 0}</span>
-                <span className="traffic-in">↓ {(trafficStats?.[device.id]?.inbound) || 0}</span>
-              </div>
-              {editingId === device.id ? (
+              {!NON_IP_CAPABLE_TYPES.has(device.type) && (
+                <>
+                  <div className="device-traffic">
+                    <span className="traffic-label">DEV</span>
+                    <span className="traffic-out">↑ {(trafficStats?.[device.id]?.outbound) || 0}</span>
+                    <span className="traffic-in">↓ {(trafficStats?.[device.id]?.inbound) || 0}</span>
+                  </div>
+                  <div className="device-traffic device-traffic-ip">
+                    <span className="traffic-label">IP</span>
+                    <span className="traffic-out">↑ {(ipTrafficStats?.[device.id]?.outbound) || 0}</span>
+                    <span className="traffic-in">↓ {(ipTrafficStats?.[device.id]?.inbound) || 0}</span>
+                  </div>
+                </>
+              )}
+              {NON_IP_CAPABLE_TYPES.has(device.type) ? (
+                <div className="device-ip" title="Peripheral endpoint (no IP)">
+                  <span className="ip-placeholder">non-IP peripheral</span>
+                </div>
+              ) : editingId === device.id ? (
                 <div
                   className="ip-edit"
                   onClick={(e) => e.stopPropagation()}

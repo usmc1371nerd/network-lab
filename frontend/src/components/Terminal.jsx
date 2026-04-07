@@ -202,13 +202,28 @@ export default function Terminal({
   const activeCommandAbortRef = useRef(null);
 
   const bluetoothDevices = devices.filter((device) => Boolean(device.btMac));
-  const usbDevices = devices.filter((device) => USB_TYPES.has(device.type));
   const sshSessionDevice = sshSessionDeviceId
     ? devices.find((device) => String(device.id) === String(sshSessionDeviceId))
     : null;
   const sshProxyGateway = sshProxyGatewayId
     ? devices.find((device) => String(device.id) === String(sshProxyGatewayId))
     : null;
+
+  // USB devices scoped to the current SSH host via canvas edges only.
+  // When not in an SSH session, falls back to all USB devices labeled by host.
+  const currentSshHost = sshSessionDevice || sshProxyGateway;
+  const usbDevices = (() => {
+    const allUsb = devices.filter((d) => USB_TYPES.has(d.type));
+    if (!currentSshHost) return allUsb;
+    const hostId = String(currentSshHost.id);
+    const connectedIds = new Set(
+      connections
+        .filter((c) => String(c.from) === hostId || String(c.to) === hostId)
+        .flatMap((c) => [String(c.from), String(c.to)])
+    );
+    return allUsb.filter((d) => connectedIds.has(String(d.id)));
+  })();
+
   const bleSessionDevice = bleSessionDeviceId
     ? devices.find((device) => String(device.id) === String(bleSessionDeviceId))
     : null;
@@ -640,8 +655,12 @@ export default function Terminal({
     }
 
     if (trimmed === "lsusb") {
+      if (!currentSshHost) {
+        pushLines(["lsusb: not attached to a host — ssh into a device first"], "error");
+        return;
+      }
       if (usbDevices.length === 0) {
-        pushLines(["(no usb devices detected)"], "info");
+        pushLines([`lsusb: no USB devices connected to ${currentSshHost.name}`], "info");
       } else {
         const lines = usbDevices.map((device, index) => {
           const devNo = String(index + 2).padStart(3, "0");
@@ -655,6 +674,10 @@ export default function Terminal({
     }
 
     if (trimmed === "lsblk") {
+      if (!currentSshHost) {
+        pushLines(["lsblk: not attached to a host — ssh into a device first"], "error");
+        return;
+      }
       const storage = usbDevices.filter((device) => device.type === "usb-storage");
       const lines = ["NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT", "sda      8:0    0  64G  0 disk /"];
       storage.forEach((device, index) => {
@@ -665,6 +688,10 @@ export default function Terminal({
     }
 
     if (trimmed === "dmesg" || trimmed === "dmesg | tail" || trimmed === "dmesg | tail -n 20") {
+      if (!currentSshHost) {
+        pushLines(["dmesg: not attached to a host — ssh into a device first"], "error");
+        return;
+      }
       const events = [
         "[    0.000000] Linux version 6.8.0-networklab (simulated)",
         "[    1.428511] usbcore: registered new interface driver usbfs",

@@ -628,6 +628,8 @@ button { cursor: pointer; border: none; background: none; font: inherit; }
   font-size: 9px;
   font-family: monospace;
 }
+.device-traffic-ip { margin-top: 0; }
+.traffic-label { color: #6e7681; min-width: 18px; }
 .traffic-out { color: #fb923c; }
 .traffic-in { color: #60a5fa; }
 .device-ip { font-size: 10px; color: #4ade80; font-family: monospace; margin-top: 2px; }
