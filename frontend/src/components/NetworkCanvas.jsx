@@ -1038,6 +1038,12 @@ export default function NetworkCanvas({
                   )}
                 </div>
               )}
+              {!NON_IP_CAPABLE_TYPES.has(device.type) && device.type !== "switch" && (
+                <div className="device-meta" title="Layer-2 / ARP cache summary">
+                  <span className="device-meta-item">MAC: {device.mac || "unassigned"}</span>
+                  <span className="device-meta-item">ARP entries: {Object.keys(device.arp_table || {}).length}</span>
+                </div>
+              )}
             </div>
           </div>
         ))}

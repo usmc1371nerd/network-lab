@@ -633,6 +633,16 @@ button { cursor: pointer; border: none; background: none; font: inherit; }
 .traffic-out { color: #fb923c; }
 .traffic-in { color: #60a5fa; }
 .device-ip { font-size: 10px; color: #4ade80; font-family: monospace; margin-top: 2px; }
+.device-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 1px;
+  font-size: 9px;
+  color: #8b949e;
+  font-family: monospace;
+}
+.device-meta-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ip-placeholder { color: #30363d; font-style: italic; }
 
 .device-delete {
