@@ -136,6 +136,7 @@ export default function App() {
         type,
         name: `${names[type] || type}-${id}`,
         ip: "",
+        routes: [],
         btMac: BLUETOOTH_TYPES.has(type) ? makeBtMac() : "",
         x,
         y,
@@ -518,6 +519,7 @@ export default function App() {
                 onClearPackets={clearCapturedPackets}
                 onShowPackets={showCapturedPackets}
                 onTrafficGenerated={applyTrafficPackets}
+                onUpdateDevice={updateDevice}
               />
             </div>
 

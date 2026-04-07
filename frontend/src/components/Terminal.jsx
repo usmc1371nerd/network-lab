@@ -48,8 +48,20 @@ const MAN_PAGES = {
     "",
     "SYNOPSIS",
     "    ip addr",
+    "    show ip route",
     "    ip route",
+    "    ip route add <network/cidr> via <gateway-ip>",
+    "    ip route delete <network/cidr>",
     "    ip neigh",
+  ],
+  traceroute: [
+    "TRACEROUTE(8)",
+    "",
+    "NAME",
+    "    traceroute - print the route packets take to network host",
+    "",
+    "SYNOPSIS",
+    "    traceroute <ip|device>",
   ],
   arp: [
     "ARP(8)",
@@ -181,6 +193,7 @@ export default function Terminal({
   onClearPackets,
   onShowPackets,
   onTrafficGenerated,
+  onUpdateDevice,
 }) {
   const [history, setHistory] = useState([
     { type: "info", text: 'Network Lab Terminal — type "help" for usage.' },
@@ -240,6 +253,60 @@ export default function Terminal({
         ? `${sshSessionDevice.name.toLowerCase()}@${sshProxyGateway.name.toLowerCase()}(proxy):~$`
         : `${sshSessionDevice.name.toLowerCase()}@lab:~$`
       : DEFAULT_PROMPT;
+
+  const parseIpv4 = (value) => {
+    const text = String(value || "").trim();
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(text)) return null;
+    const octets = text.split(".").map(Number);
+    if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+      return null;
+    }
+    return text;
+  };
+
+  const normalizeCidr = (value) => {
+    const text = String(value || "").trim();
+    const match = text.match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/);
+    if (!match) return null;
+    const ip = parseIpv4(match[1]);
+    const prefix = Number(match[2]);
+    if (!ip || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return null;
+    return `${ip}/${prefix}`;
+  };
+
+  const routePrefixLen = (network) => {
+    const normalized = normalizeCidr(network);
+    if (!normalized) return -1;
+    return Number(normalized.split("/")[1]);
+  };
+
+  const ipToInt = (ip) => {
+    const parsed = parseIpv4(ip);
+    if (!parsed) return null;
+    return parsed.split(".").reduce((acc, octet) => (acc << 8) + Number(octet), 0) >>> 0;
+  };
+
+  const connectedNetworkForHost = (host) => {
+    const ip = parseIpv4(host?.ip);
+    if (!ip) return null;
+    const [a, b, c] = ip.split(".");
+    return `${a}.${b}.${c}.0/24`;
+  };
+
+  const effectiveRoutesForHost = (host) => {
+    if (!host) return [];
+    const connected = connectedNetworkForHost(host);
+    const staticRoutes = Array.isArray(host.routes) ? host.routes : [];
+    const normalizedStatic = staticRoutes
+      .map((route) => ({
+        network: normalizeCidr(route.network),
+        via: parseIpv4(route.via),
+      }))
+      .filter((route) => route.network && route.via)
+      .sort((left, right) => routePrefixLen(right.network) - routePrefixLen(left.network));
+    const connectedEntry = connected ? [{ network: connected, via: null, connected: true }] : [];
+    return [...connectedEntry, ...normalizedStatic];
+  };
 
   useEffect(() => {
     if (sshSessionDeviceId && !sshSessionDevice) {
@@ -628,16 +695,60 @@ export default function Terminal({
       return;
     }
 
-    if (trimmed === "ip route") {
-      const routed = devices
-        .filter((device) => device.ip)
-        .map((device) => {
-          const octets = device.ip.split(".");
-          if (octets.length !== 4) return null;
-          return `${octets[0]}.${octets[1]}.${octets[2]}.0/24 dev ${device.name.toLowerCase()}`;
-        })
-        .filter(Boolean);
-      pushLines(routed.length === 0 ? ["No routes configured."] : Array.from(new Set(routed)), "info");
+    if (trimmed === "show ip route" || trimmed === "ip route") {
+      if (!sshSessionDevice) {
+        pushLines(["ip route: run this command from an ssh host context"], "error");
+        return;
+      }
+      const rows = effectiveRoutesForHost(sshSessionDevice).map((route) => {
+        if (route.connected) {
+          return `${route.network} dev eth0 scope link`;
+        }
+        return `${route.network} via ${route.via} dev eth0`;
+      });
+      pushLines(rows.length === 0 ? ["No routes configured."] : rows, "info");
+      return;
+    }
+
+    const routeAddMatch = trimmed.match(/^ip\s+route\s+add\s+(\S+)\s+via\s+(\S+)$/i);
+    if (routeAddMatch) {
+      if (!sshSessionDevice) {
+        pushLines(["ip route add: run this command from an ssh host context"], "error");
+        return;
+      }
+      const network = normalizeCidr(routeAddMatch[1]);
+      const gateway = parseIpv4(routeAddMatch[2]);
+      if (!network || !gateway) {
+        pushLines(["ip route add: invalid syntax (expected: ip route add <network/cidr> via <gateway-ip>)"], "error");
+        return;
+      }
+      const existing = Array.isArray(sshSessionDevice.routes) ? sshSessionDevice.routes : [];
+      const deduped = existing.filter((route) => normalizeCidr(route.network) !== network);
+      const nextRoutes = [...deduped, { network, via: gateway }];
+      onUpdateDevice?.(sshSessionDevice.id, { routes: nextRoutes });
+      pushLines([`ip route add: ${network} via ${gateway}`], "info");
+      return;
+    }
+
+    const routeDeleteMatch = trimmed.match(/^ip\s+route\s+delete\s+(\S+)$/i);
+    if (routeDeleteMatch) {
+      if (!sshSessionDevice) {
+        pushLines(["ip route delete: run this command from an ssh host context"], "error");
+        return;
+      }
+      const network = normalizeCidr(routeDeleteMatch[1]);
+      if (!network) {
+        pushLines(["ip route delete: invalid network (expected: <network/cidr>)"], "error");
+        return;
+      }
+      const existing = Array.isArray(sshSessionDevice.routes) ? sshSessionDevice.routes : [];
+      const nextRoutes = existing.filter((route) => normalizeCidr(route.network) !== network);
+      if (nextRoutes.length === existing.length) {
+        pushLines([`ip route delete: route not found (${network})`], "error");
+        return;
+      }
+      onUpdateDevice?.(sshSessionDevice.id, { routes: nextRoutes });
+      pushLines([`ip route delete: removed ${network}`], "info");
       return;
     }
 
@@ -880,6 +991,7 @@ export default function Terminal({
       pushLines([
         "Available commands:",
         "  ping <ip|device> [-c N]  - send ICMP echo requests",
+        "  traceroute <ip|device>   - trace route hop-by-hop",
         "  ssh <device|ip>          - open host command context",
         "  ssh <target> via <gateway> - proxy session via gateway",
         "  sendpkt <dst> [proto]    - send a synthetic packet from ssh host",
@@ -889,7 +1001,9 @@ export default function Terminal({
         "  ble disconnect           - close BLE session",
         "  exit                     - close ssh host context",
         "  ip addr | ip a           - show device interfaces",
-        "  ip route                 - show basic routes",
+        "  show ip route | ip route - show host route table",
+        "  ip route add <net> via <gw> - add static route",
+        "  ip route delete <net>    - remove static route",
         "  ip neigh | arp -a        - show neighbor table",
         "  lsusb                    - list USB/peripheral devices",
         "  lsblk                    - list block/removable storage",
@@ -915,6 +1029,7 @@ export default function Terminal({
     activeCommandAbortRef.current = abortController;
     try {
       const pingByName = trimmed.match(/^ping\s+(\S+)(.*)$/i);
+      const tracerouteByName = trimmed.match(/^traceroute\s+(\S+)(.*)$/i);
       let normalizedCommand = trimmed;
       if (pingByName) {
         const target = pingByName[1].toLowerCase();
@@ -922,6 +1037,13 @@ export default function Terminal({
         const matched = devices.find((device) => device.name.toLowerCase() === target && device.ip);
         if (matched) {
           normalizedCommand = `ping ${matched.ip}${suffix}`;
+        }
+      } else if (tracerouteByName) {
+        const target = tracerouteByName[1].toLowerCase();
+        const suffix = tracerouteByName[2] || "";
+        const matched = devices.find((device) => device.name.toLowerCase() === target && device.ip);
+        if (matched) {
+          normalizedCommand = `traceroute ${matched.ip}${suffix}`;
         }
       }
 

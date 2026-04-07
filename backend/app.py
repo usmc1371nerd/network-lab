@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import random
 import math
+import ipaddress
 from collections import deque
 
 NON_PINGABLE_TYPES = {
@@ -70,6 +71,126 @@ def is_forwarding_device(device):
     if not device:
         return False
     return str(device.get("type") or "").lower() in FORWARDING_TYPES
+
+
+def parse_ipv4_address(value):
+    try:
+        return ipaddress.ip_address(str(value).strip())
+    except Exception:
+        return None
+
+
+def parse_ipv4_network(value):
+    try:
+        return ipaddress.ip_network(str(value).strip(), strict=False)
+    except Exception:
+        return None
+
+
+def connected_network_for_device(device):
+    if not device:
+        return None
+    ip = parse_ipv4_address(device.get("ip"))
+    if not ip:
+        return None
+    return ipaddress.ip_network(f"{ip}/24", strict=False)
+
+
+def select_best_route(source, target_ip):
+    target_addr = parse_ipv4_address(target_ip)
+    if not source or not target_addr:
+        return None
+
+    connected_net = connected_network_for_device(source)
+    if connected_net and target_addr in connected_net:
+        return {
+            "kind": "connected",
+            "network": str(connected_net),
+            "via": None,
+            "prefix": connected_net.prefixlen,
+        }
+
+    candidates = []
+    for route in source.get("routes", []) or []:
+        network = parse_ipv4_network(route.get("network"))
+        via = route.get("via")
+        via_addr = parse_ipv4_address(via)
+        if not network or not via_addr:
+            continue
+        if target_addr in network:
+            candidates.append({
+                "kind": "static",
+                "network": str(network),
+                "via": str(via_addr),
+                "prefix": network.prefixlen,
+            })
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item["prefix"], reverse=True)
+    return candidates[0]
+
+
+def build_path_for_route(source, target, selected_route, devices, connections, devices_by_id):
+    if not source or not target:
+        return None, "missing source or target"
+
+    source_id = str(source.get("id"))
+    target_id = str(target.get("id"))
+    device_ids = [str(device.get("id")) for device in devices if device.get("id") is not None]
+
+    if not selected_route:
+        return None, "no matching route"
+
+    if not selected_route.get("via"):
+        direct_path = find_path(
+            device_ids=device_ids,
+            connections=connections,
+            start_id=source_id,
+            target_id=target_id,
+            devices_by_id=devices_by_id,
+        )
+        return direct_path, None if direct_path else "no route in topology"
+
+    gateway_ip = selected_route.get("via")
+    gateway = next((device for device in devices if str(device.get("ip") or "") == str(gateway_ip)), None)
+    if not gateway:
+        return None, f"gateway {gateway_ip} not found"
+
+    gateway_id = str(gateway.get("id"))
+    to_gateway = find_path(
+        device_ids=device_ids,
+        connections=connections,
+        start_id=source_id,
+        target_id=gateway_id,
+        devices_by_id=devices_by_id,
+    )
+    if not to_gateway:
+        return None, f"gateway {gateway_ip} unreachable"
+
+    if gateway_id == target_id:
+        return to_gateway, None
+
+    to_target = find_path(
+        device_ids=device_ids,
+        connections=connections,
+        start_id=gateway_id,
+        target_id=target_id,
+        devices_by_id=devices_by_id,
+    )
+    if not to_target:
+        return None, "no route from gateway to target"
+
+    return to_gateway + to_target[1:], None
+
+
+def has_static_routes(device):
+    if not device:
+        return False
+    for route in device.get("routes", []) or []:
+        if parse_ipv4_network(route.get("network")) and parse_ipv4_address(route.get("via")):
+            return True
+    return False
 
 
 def can_traverse(conn, src_id, dst_id):
@@ -218,17 +339,44 @@ def run_command():
         output_lines.append(f"PING {target_ip} ({target_ip}) 56(84) bytes of data.")
 
         if target:
-            path = find_path(
-                device_ids=[str(device.get("id")) for device in devices if device.get("id") is not None],
-                connections=connections,
-                start_id=str(source.get("id")) if source else "",
-                target_id=str(target.get("id")),
-                devices_by_id=devices_by_id,
-            )
+            selected_route = select_best_route(source, target_ip)
+            path = None
+            route_error = None
+            if selected_route:
+                path, route_error = build_path_for_route(source, target, selected_route, devices, connections, devices_by_id)
+            elif has_static_routes(source):
+                route_error = "no matching route"
+            else:
+                path = find_path(
+                    device_ids=[str(device.get("id")) for device in devices if device.get("id") is not None],
+                    connections=connections,
+                    start_id=str(source.get("id")) if source else "",
+                    target_id=str(target.get("id")),
+                    devices_by_id=devices_by_id,
+                )
+                if not path:
+                    route_error = "no route in topology"
+
+            if selected_route:
+                if selected_route.get("via"):
+                    output_lines.append(
+                        f"route lookup: {target_ip} matched {selected_route.get('network')} via {selected_route.get('via')}"
+                    )
+                else:
+                    output_lines.append(
+                        f"route lookup: {target_ip} matched connected {selected_route.get('network')}"
+                    )
+                packets.append({
+                    "no": next_no(), "time": 0.0,
+                    "src": source.get("ip") or source.get("name") or src_ip,
+                    "dst": target_ip,
+                    "protocol": "ROUTE", "len": 64,
+                    "info": f"route decision {selected_route.get('network')} via {selected_route.get('via') or 'connected'}"
+                })
 
             if not path:
                 output_lines += [
-                    f"From {src_ip} Destination Host Unreachable (no route in topology)",
+                    f"From {src_ip} Destination Host Unreachable ({route_error or 'no route in topology'})",
                     "",
                     f"--- {target_ip} ping statistics ---",
                     f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
@@ -320,10 +468,106 @@ def run_command():
                 f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
             ]
 
+    elif cmd == "traceroute" and len(parts) >= 2:
+        target_token = parts[1]
+        devices_by_id = {str(device.get("id")): device for device in devices}
+        target_device = find_device_by_token(devices, target_token)
+
+        if not target_device or not target_device.get("ip"):
+            output_lines = [f"traceroute: unknown host {target_token}"]
+            return jsonify({"output": output_lines, "packets": []})
+
+        source = devices_by_id.get(source_device_id) if source_device_id else None
+        if not source:
+            source = next((device for device in devices if device.get("ip") and str(device.get("id")) != str(target_device.get("id"))), None)
+
+        if not source:
+            output_lines = ["traceroute: no suitable source host"]
+            return jsonify({"output": output_lines, "packets": []})
+
+        if not source.get("ip"):
+            output_lines = [f"traceroute: source '{source.get('name')}' has no IP configured"]
+            return jsonify({"output": output_lines, "packets": []})
+
+        target_ip = target_device.get("ip")
+        selected_route = select_best_route(source, target_ip)
+        path = None
+        route_error = None
+        if selected_route:
+            path, route_error = build_path_for_route(source, target_device, selected_route, devices, connections, devices_by_id)
+        elif has_static_routes(source):
+            route_error = "no matching route"
+        else:
+            path = find_path(
+                device_ids=[str(device.get("id")) for device in devices if device.get("id") is not None],
+                connections=connections,
+                start_id=str(source.get("id")),
+                target_id=str(target_device.get("id")),
+                devices_by_id=devices_by_id,
+            )
+            if not path:
+                route_error = "no route in topology"
+
+        output_lines.append(f"traceroute to {target_device.get('name')} ({target_ip}), max 30 hops")
+        if selected_route:
+            if selected_route.get("via"):
+                output_lines.append(f"route lookup: {target_ip} matched {selected_route.get('network')} via {selected_route.get('via')}")
+            else:
+                output_lines.append(f"route lookup: {target_ip} matched connected {selected_route.get('network')}")
+        elif has_static_routes(source):
+            output_lines.append(f"route lookup: no matching route for {target_ip}")
+        else:
+            output_lines.append("route lookup: topology path fallback (no static routes configured)")
+
+        if not path:
+            output_lines.append(f"traceroute: destination unreachable ({route_error or 'no route in topology'})")
+            return jsonify({"output": output_lines, "packets": []})
+
+        hop_count = max(1, len(path) - 1)
+        for hop in range(1, hop_count + 1):
+            hop_device = devices_by_id.get(path[hop], {})
+            hop_name = hop_device.get("name") or path[hop]
+            hop_ip = hop_device.get("ip") or hop_name
+            hop_latency = round(0.7 + hop * 0.8 + random.uniform(0, 0.25), 2)
+
+            output_lines.append(f" {hop:<2} {hop_name} ({hop_ip})  {hop_latency:.2f} ms")
+
+            packets.append({
+                "no": next_no(),
+                "time": round(hop * 0.01, 4),
+                "src": source.get("ip") or source.get("name"),
+                "dst": hop_ip,
+                "protocol": "ICMP",
+                "len": 74,
+                "info": f"Traceroute probe ttl={hop} hop {hop}/{hop_count}"
+            })
+
+            if hop < hop_count:
+                packets.append({
+                    "no": next_no(),
+                    "time": round(hop * 0.01 + 0.003, 4),
+                    "src": hop_ip,
+                    "dst": source.get("ip") or source.get("name"),
+                    "protocol": "ICMP",
+                    "len": 70,
+                    "info": f"ICMP Time Exceeded ttl={hop} from {hop_name}"
+                })
+            else:
+                packets.append({
+                    "no": next_no(),
+                    "time": round(hop * 0.01 + 0.004, 4),
+                    "src": hop_ip,
+                    "dst": source.get("ip") or source.get("name"),
+                    "protocol": "ICMP",
+                    "len": 70,
+                    "info": f"ICMP Echo Reply from {hop_name}"
+                })
+
     elif cmd == "help":
         output_lines = [
             "Available commands:",
             "  ping <ip> [-c N]  - send ICMP echo requests",
+            "  traceroute <ip>   - trace route hop-by-hop",
             "  help              - show available commands",
             "  clear             - clear terminal output",
         ]
