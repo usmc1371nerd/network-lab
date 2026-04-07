@@ -25,9 +25,29 @@ Implemented device categories:
 - IoT devices: bulb, lock, tag, camera, thermostat, plug
 - Other peripherals: USB storage, keyboard, mouse, webcam, audio, printer
 
+Device capability policy:
+- IP-capable types (can send/receive IP traffic, be pinged, have IPs assigned):
+	PC, Server, Router, Switch, Gateway, Laptop, Phone, IoT devices with network stack
+- Non-IP peripheral types (no IP stack, no MAC, not pingable, IP field hidden in UI):
+	usb-storage, usb-keyboard, usb-mouse, usb-webcam, usb-audio, usb-printer,
+	beacon, sensor, iot-tag
+- Forwarding types (can act as transit hops in BFS path routing):
+	switch, router, gateway
+- Design rationale:
+	A USB mouse on PC-1 is a physical USB attachment, not a network endpoint.
+	PC-2 cannot address it at all — there is no route, no IP, no MAC.
+	The canvas edge from PC-1 to Mouse-1 represents physical USB attachment only,
+	not a routable network path. Commands like lsusb are local to the host they
+	are run from and only show devices physically connected to that host via
+	canvas edges.
+- Traffic counters are hidden entirely on non-IP peripheral device nodes
+	(no DEV or IP rows rendered — peripherals generate no network traffic).
+
 Implemented terminal/network behaviors:
 - `ping`, `ip addr`, `ip route`, `ip neigh`, `arp -a`
-- `lsusb`, `lsblk`, `dmesg`
+- `lsusb`, `lsblk`, `dmesg` — scoped to SSH host; only shows devices with a
+	canvas edge to the current SSH session host. Requires active SSH session.
+	Running without SSH context returns an error: "ssh into a device first".
 - `bluetoothctl devices|scan|pair|connect|info`
 - `ssh <device|ip>` host context sessions
 - `ssh <target> via <gateway>` proxied session flow for learning
@@ -42,7 +62,10 @@ Implemented terminal/network behaviors:
 - terminal copy/paste support
 
 Implemented traffic and visualization features:
-- per-device inbound/outbound traffic counters
+- per-device inbound/outbound traffic counters split into two rows:
+	DEV row: all traffic (layer 2 and above)
+	IP row: IP-layer traffic only (ICMP, ARP, TCP, UDP, IP, IPv6)
+- traffic counter rows hidden entirely on non-IP peripheral devices
 - per-link directional traffic counters
 - separate inbound/outbound rendered link paths
 - packet capture buffering and explicit reveal to packet panel
@@ -63,6 +86,14 @@ Implemented link realism controls:
 - visual drop telemetry for blocked, queue, and RED conditions
 - presets for Stable / Congested / Hostile links
 - simplified link editor with optional advanced controls
+- link condition label rendered on each edge showing:
+	CAT · loss% · latency±jitter · bwXpps · qX for outbound and inbound directions
+
+Canvas behavior:
+- No positional boundaries — devices can be freely placed and dragged anywhere
+	in world space (unbounded). Pan to navigate.
+- Zoom anchors to mouse cursor position (Ctrl+Scroll)
+- Pan via Space+Drag (camera model — inner world layer transforms, viewport fixed)
 
 Data transfer visual challenge (high-level):
 - Goal: make learners clearly see data moving between devices during commands such as `ping`.
