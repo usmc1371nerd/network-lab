@@ -106,6 +106,21 @@ def build_switch_mac_tables(devices):
     return tables
 
 
+def build_arp_tables(devices):
+    tables = {}
+    for device in devices:
+        device_id = str(device.get("id"))
+        raw_table = device.get("arp_table") or {}
+        table = {}
+        for ip_addr, mac_addr in raw_table.items():
+            ip = str(ip_addr or "").strip()
+            mac = normalize_mac(mac_addr)
+            if ip and mac:
+                table[ip] = mac
+        tables[device_id] = table
+    return tables
+
+
 def parse_ping_count(parts):
     count = 4
     for index, part in enumerate(parts):
@@ -422,6 +437,7 @@ def run_command():
         src_mac = device_mac(source)
         dst_mac = device_mac(target) if target else stable_mac_from_seed(target_ip)
         switch_mac_tables = build_switch_mac_tables(devices)
+        arp_tables = build_arp_tables(devices)
 
         output_lines.append(f"PING {target_ip} ({target_ip}) 56(84) bytes of data.")
 
@@ -471,44 +487,32 @@ def run_command():
                 device_updates = [
                     {"id": switch_id, "mac_table": table}
                     for switch_id, table in switch_mac_tables.items()
+                ] + [
+                    {"id": device_id, "arp_table": table}
+                    for device_id, table in arp_tables.items()
+                    if table
                 ]
                 return respond(output_lines, packets, device_updates)
 
             hop_names = [devices_by_id.get(path_id, {}).get("name", path_id) for path_id in path]
             output_lines.append(f"route: {' -> '.join(hop_names)}")
 
-            # ARP resolution
-            first_hop_device = devices_by_id.get(path[1], target) if len(path) > 1 else target
-            first_hop_ip = first_hop_device.get("ip") or target_ip
-            packets.append({
-                "no": next_no(), "time": 0.0,
-                "src": src_mac, "dst": "ff:ff:ff:ff:ff:ff",
-                "protocol": "ARP", "len": 42,
-                "info": f"Who has {first_hop_ip}?  Tell {src_ip}"
-            })
-            packets.append({
-                "no": next_no(), "time": round(random.uniform(0.0005, 0.002), 4),
-                "src": dst_mac, "dst": src_mac,
-                "protocol": "ARP", "len": 42,
-                "info": f"{first_hop_ip} is at {dst_mac}"
-            })
-
-            def append_icmp_hop(from_id, to_id, hop_time, seq, hop_index, total_hops, label, frame_src_mac, frame_dst_mac):
+            def append_frame_hop(from_id, to_id, hop_time, protocol, frame_info, frame_src_mac, frame_dst_mac, frame_len=74):
                 hop_from = devices_by_id.get(from_id, {})
                 hop_to = devices_by_id.get(to_id, {})
                 packets.append({
                     "no": next_no(), "time": hop_time,
                     "src": hop_from.get("ip") or hop_from.get("name") or src_ip,
                     "dst": hop_to.get("ip") or hop_to.get("name") or target_ip,
-                    "protocol": "ICMP", "len": 74,
+                    "protocol": protocol, "len": frame_len,
                     "src_mac": frame_src_mac,
                     "dst_mac": frame_dst_mac,
                     "ingress_port": switch_port_id(to_id, from_id) if is_switch(hop_to) else None,
                     "egress_port": switch_port_id(from_id, to_id) if is_switch(hop_from) else None,
-                    "info": f"Echo (ping) {label} id=0x0001, seq={seq}/256, ttl={max(1, 64 - hop_index)} hop {hop_index + 1}/{total_hops}"
+                    "info": frame_info,
                 })
 
-            def process_switch_forwarding(switch_id, ingress_id, intended_next_id, frame_src_mac, frame_dst_mac, event_time, seq):
+            def process_switch_forwarding(switch_id, ingress_id, intended_next_id, frame_src_mac, frame_dst_mac, event_time, seq, frame_protocol="ICMP", frame_replica_info=None, force_flood=False):
                 switch_device = devices_by_id.get(switch_id, {})
                 switch_name = switch_device.get("name") or switch_id
                 ingress_port = switch_port_id(switch_id, ingress_id)
@@ -530,11 +534,14 @@ def run_command():
                         "info": f"MAC learned: {frame_src_mac} -> {ingress_port}",
                     })
 
+                is_broadcast = str(frame_dst_mac).lower() == "ff:ff:ff:ff:ff:ff"
                 known_port = table.get(frame_dst_mac)
                 neighbors = switch_neighbors(switch_id, connections)
                 egress_ids = []
                 flood_mode = False
-                if known_port:
+                if force_flood or is_broadcast:
+                    flood_mode = True
+                elif known_port:
                     known_neighbor = parse_switch_port_neighbor(known_port, switch_id)
                     if known_neighbor and known_neighbor in neighbors and known_neighbor != str(ingress_id):
                         egress_ids = [known_neighbor]
@@ -568,16 +575,115 @@ def run_command():
                             "time": round(event_time + 0.0004, 4),
                             "src": switch_name,
                             "dst": flood_neighbor_device.get("ip") or flood_neighbor_device.get("name") or flood_neighbor,
-                            "protocol": "ICMP",
+                            "protocol": frame_protocol,
                             "len": 74,
                             "src_mac": frame_src_mac,
                             "dst_mac": frame_dst_mac,
                             "ingress_port": ingress_port,
                             "egress_port": switch_port_id(switch_id, flood_neighbor),
-                            "info": f"Switch flood replica seq={seq}/256",
+                            "info": frame_replica_info or f"Switch flood replica seq={seq}/256",
                         })
 
                 return str(intended_next_id) in {str(egress) for egress in egress_ids}
+
+            source_id = str(source.get("id")) if source else None
+            target_id = str(target.get("id")) if target else None
+            source_arp_table = arp_tables.setdefault(source_id, {}) if source_id else {}
+            target_arp_table = arp_tables.setdefault(target_id, {}) if target_id else {}
+            cached_dst_mac = normalize_mac(source_arp_table.get(target_ip))
+            resolved_dst_mac = cached_dst_mac if cached_dst_mac else dst_mac
+
+            if not cached_dst_mac:
+                output_lines.append(f"ARP request: who has {target_ip}? tell {src_ip}")
+                request_hops = max(1, len(path) - 1)
+                for hop_index in range(request_hops):
+                    from_id = path[hop_index]
+                    to_id = path[hop_index + 1]
+                    hop_time = round(0.0008 + hop_index * 0.0012, 4)
+                    append_frame_hop(
+                        from_id,
+                        to_id,
+                        hop_time,
+                        "ARP",
+                        f"ARP request broadcast: who has {target_ip}? tell {src_ip}",
+                        src_mac,
+                        "ff:ff:ff:ff:ff:ff",
+                        42,
+                    )
+                    if is_switch(devices_by_id.get(to_id)) and hop_index + 2 < len(path):
+                        intended_next = path[hop_index + 2]
+                        process_switch_forwarding(
+                            to_id,
+                            from_id,
+                            intended_next,
+                            src_mac,
+                            "ff:ff:ff:ff:ff:ff",
+                            hop_time,
+                            seq=0,
+                            frame_protocol="ARP",
+                            frame_replica_info=f"ARP request broadcast for {target_ip}",
+                            force_flood=True,
+                        )
+
+                target_arp_table[src_ip] = src_mac
+                output_lines.append(f"ARP reply: {target_ip} is at {dst_mac}")
+
+                reverse_path = list(reversed(path))
+                reply_hops = max(1, len(reverse_path) - 1)
+                arp_reply_delivered = True
+                for hop_index in range(reply_hops):
+                    from_id = reverse_path[hop_index]
+                    to_id = reverse_path[hop_index + 1]
+                    hop_time = round(0.006 + hop_index * 0.0012, 4)
+                    append_frame_hop(
+                        from_id,
+                        to_id,
+                        hop_time,
+                        "ARP",
+                        f"ARP reply: {target_ip} is at {dst_mac}",
+                        dst_mac,
+                        src_mac,
+                        42,
+                    )
+                    if is_switch(devices_by_id.get(to_id)) and hop_index + 2 < len(reverse_path):
+                        intended_next = reverse_path[hop_index + 2]
+                        if not process_switch_forwarding(
+                            to_id,
+                            from_id,
+                            intended_next,
+                            dst_mac,
+                            src_mac,
+                            hop_time,
+                            seq=0,
+                            frame_protocol="ARP",
+                            frame_replica_info=f"ARP reply unicast for {src_ip}",
+                            force_flood=False,
+                        ):
+                            arp_reply_delivered = False
+                            break
+
+                if arp_reply_delivered:
+                    source_arp_table[target_ip] = dst_mac
+                    output_lines.append(f"ARP table entry created: {target_ip} -> {dst_mac}")
+                    resolved_dst_mac = dst_mac
+                else:
+                    output_lines.append(f"ARP resolution failed for {target_ip}")
+                    output_lines += [
+                        "",
+                        f"--- {target_ip} ping statistics ---",
+                        f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
+                    ]
+                    device_updates = [
+                        {"id": switch_id, "mac_table": table}
+                        for switch_id, table in switch_mac_tables.items()
+                    ] + [
+                        {"id": device_id, "arp_table": table}
+                        for device_id, table in arp_tables.items()
+                        if table
+                    ]
+                    return respond(output_lines, packets, device_updates)
+            else:
+                output_lines.append(f"ARP cache hit: {target_ip} -> {cached_dst_mac}")
 
             rtt_samples = []
             successful_rtts = []
@@ -592,11 +698,20 @@ def run_command():
                     from_id = path[hop_index]
                     to_id = path[hop_index + 1]
                     hop_time = round(base + hop_index * 0.0015, 4)
-                    append_icmp_hop(from_id, to_id, hop_time, seq, hop_index, request_hops, "request", src_mac, dst_mac)
+                    append_frame_hop(
+                        from_id,
+                        to_id,
+                        hop_time,
+                        "ICMP",
+                        f"Echo (ping) request id=0x0001, seq={seq}/256, ttl={max(1, 64 - hop_index)} hop {hop_index + 1}/{request_hops}",
+                        src_mac,
+                        resolved_dst_mac,
+                        74,
+                    )
 
                     if is_switch(devices_by_id.get(to_id)) and hop_index + 2 < len(path):
                         intended_next = path[hop_index + 2]
-                        if not process_switch_forwarding(to_id, from_id, intended_next, src_mac, dst_mac, hop_time, seq):
+                        if not process_switch_forwarding(to_id, from_id, intended_next, src_mac, resolved_dst_mac, hop_time, seq):
                             request_delivered = False
                             packets.append({
                                 "no": next_no(),
@@ -606,7 +721,7 @@ def run_command():
                                 "protocol": "L2",
                                 "len": 64,
                                 "src_mac": src_mac,
-                                "dst_mac": dst_mac,
+                                "dst_mac": resolved_dst_mac,
                                 "ingress_port": switch_port_id(to_id, from_id),
                                 "egress_port": None,
                                 "info": "Switch drop: destination MAC not reachable on active ports",
@@ -624,7 +739,16 @@ def run_command():
                     from_id = reverse_path[hop_index]
                     to_id = reverse_path[hop_index + 1]
                     hop_time = round(base + rtt_ms / 1000 + hop_index * 0.0015, 4)
-                    append_icmp_hop(from_id, to_id, hop_time, seq, hop_index, reply_hops, "reply", dst_mac, src_mac)
+                    append_frame_hop(
+                        from_id,
+                        to_id,
+                        hop_time,
+                        "ICMP",
+                        f"Echo (ping) reply    id=0x0001, seq={seq}/256, ttl={max(1, 64 - hop_index)} hop {hop_index + 1}/{reply_hops}",
+                        dst_mac,
+                        src_mac,
+                        74,
+                    )
 
                     if is_switch(devices_by_id.get(to_id)) and hop_index + 2 < len(reverse_path):
                         intended_next = reverse_path[hop_index + 2]
@@ -689,6 +813,10 @@ def run_command():
         device_updates = [
             {"id": switch_id, "mac_table": table}
             for switch_id, table in switch_mac_tables.items()
+        ] + [
+            {"id": device_id, "arp_table": table}
+            for device_id, table in arp_tables.items()
+            if table
         ]
 
     elif cmd == "traceroute" and len(parts) >= 2:

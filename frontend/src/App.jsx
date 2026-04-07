@@ -113,6 +113,9 @@ export default function App() {
         if (!device.mac && !NON_IP_CAPABLE_TYPES.has(device.type)) {
           patch.mac = makeStableMac(device.id || device.name || device.type);
         }
+        if (!NON_IP_CAPABLE_TYPES.has(device.type) && (typeof device.arp_table !== "object" || device.arp_table === null)) {
+          patch.arp_table = {};
+        }
         if (device.type === "switch" && (typeof device.mac_table !== "object" || device.mac_table === null)) {
           patch.mac_table = {};
         }
@@ -169,6 +172,7 @@ export default function App() {
         ip: "",
         routes: [],
         mac: NON_IP_CAPABLE_TYPES.has(type) ? "" : makeStableMac(id),
+        arp_table: NON_IP_CAPABLE_TYPES.has(type) ? undefined : {},
         mac_table: type === "switch" ? {} : undefined,
         btMac: BLUETOOTH_TYPES.has(type) ? makeBtMac() : "",
         x,

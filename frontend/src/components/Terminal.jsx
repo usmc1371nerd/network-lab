@@ -71,6 +71,7 @@ const MAN_PAGES = {
     "",
     "SYNOPSIS",
     "    arp -a",
+    "    clear arp",
   ],
   "show mac-address-table": [
     "SHOW-MAC-ADDRESS-TABLE(8)",
@@ -673,6 +674,16 @@ export default function Terminal({
       return;
     }
 
+    if (trimmed === "clear arp") {
+      if (!sshSessionDevice) {
+        pushLines(["clear arp: run this command from an ssh host context"], "error");
+        return;
+      }
+      onUpdateDevice?.(sshSessionDevice.id, { arp_table: {} });
+      pushLines([`clear arp: cleared ARP cache on ${sshSessionDevice.name}`], "info");
+      return;
+    }
+
     if (trimmed === "clear") {
       setHistory([]);
       return;
@@ -762,13 +773,18 @@ export default function Terminal({
     }
 
     if (trimmed === "ip neigh" || trimmed === "arp -a") {
-      const ipNodes = devices.filter((device) => device.ip);
-      if (ipNodes.length === 0) {
+      if (!sshSessionDevice) {
+        pushLines(["arp -a: run this command from an ssh host context"], "error");
+        return;
+      }
+      const table = sshSessionDevice.arp_table || {};
+      const entries = Object.entries(table)
+        .filter(([ip, mac]) => Boolean(ip) && Boolean(mac))
+        .sort((a, b) => a[0].localeCompare(b[0]));
+      if (entries.length === 0) {
         pushLines(["(no arp entries)"], "info");
       } else {
-        const lines = ipNodes.map(
-          (device, index) => `${device.ip} dev eth0 lladdr 02:00:00:00:${String(index + 10).padStart(2, "0")}:${String(index + 20).padStart(2, "0")} REACHABLE`
-        );
+        const lines = entries.map(([ip, mac]) => `${ip} dev eth0 lladdr ${String(mac).toLowerCase()} REACHABLE`);
         pushLines(lines);
       }
       return;
@@ -1044,6 +1060,7 @@ export default function Terminal({
         "  ip route add <net> via <gw> - add static route",
         "  ip route delete <net>    - remove static route",
         "  ip neigh | arp -a        - show neighbor table",
+        "  clear arp                - clear ARP cache on active host",
         "  show mac-address-table   - show learned switch MAC entries",
         "  lsusb                    - list USB/peripheral devices",
         "  lsblk                    - list block/removable storage",
@@ -1110,6 +1127,9 @@ export default function Terminal({
           const fields = {};
           if (update.mac_table && typeof update.mac_table === "object") {
             fields.mac_table = update.mac_table;
+          }
+          if (update.arp_table && typeof update.arp_table === "object") {
+            fields.arp_table = update.arp_table;
           }
           if (Object.keys(fields).length > 0) {
             onUpdateDevice?.(update.id, fields);
