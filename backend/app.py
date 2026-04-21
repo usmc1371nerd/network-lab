@@ -1,5 +1,7 @@
 
-from flask import Flask, request, jsonify
+import os
+from pathlib import Path
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import random
 import math
@@ -29,7 +31,10 @@ L2_TRAVERSAL_TYPES = {
     "router", "gateway",
 }
 
-app = Flask(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
+
+app = Flask(__name__, static_folder=str(FRONTEND_DIST_DIR), static_url_path="")
 CORS(app)
 
 
@@ -1106,5 +1111,28 @@ def run_command():
     return respond(output_lines, packets, device_updates)
 
 
+@app.get("/")
+def serve_index():
+    if FRONTEND_DIST_DIR.exists():
+        return send_from_directory(app.static_folder, "index.html")
+    return jsonify({
+        "message": "Frontend build not found. Run `npm run build` in `frontend` before serving with Flask.",
+    }), 503
+
+
+@app.get("/<path:path>")
+def serve_frontend(path):
+    if not FRONTEND_DIST_DIR.exists():
+        return jsonify({
+            "message": "Frontend build not found. Run `npm run build` in `frontend` before serving with Flask.",
+        }), 503
+
+    asset_path = FRONTEND_DIST_DIR / path
+    if asset_path.exists() and asset_path.is_file():
+        return send_from_directory(app.static_folder, path)
+
+    return send_from_directory(app.static_folder, "index.html")
+
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=int(os.environ.get("PORT", "5000")))

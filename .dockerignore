@@ -1,0 +1,9 @@
+.git
+.gitignore
+.venv
+.vite
+.vscode
+frontend/node_modules
+frontend/dist
+backend/__pycache__
+backend/*.pyc
