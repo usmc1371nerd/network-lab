@@ -7,6 +7,7 @@ import random
 import math
 import ipaddress
 from collections import deque
+from link_simulation import LinkSimulation
 
 NON_PINGABLE_TYPES = {
     "usb-storage",
@@ -20,16 +21,10 @@ NON_PINGABLE_TYPES = {
     "iot-tag",
 }
 
-FORWARDING_TYPES = {"switch", "router", "gateway"}
+FORWARDING_TYPES = {"switch", "hub", "ap", "router", "gateway"}
 
-# Device types that can act as L2 intermediaries (no routing required).
-# Router/gateway are included so they don't block L2 traversal when present
-# on a flat subnet path alongside switches/hubs.
-L2_TRAVERSAL_TYPES = {
-    "pc", "laptop", "server", "phone",
-    "switch", "hub", "ap",
-    "router", "gateway",
-}
+# Ordinary hosts and USB peripherals do not bridge frames between links.
+L2_TRAVERSAL_TYPES = {"switch", "hub", "ap"}
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
@@ -91,12 +86,16 @@ def parse_switch_port_neighbor(port_id, switch_id):
     return text[len(prefix):]
 
 
-def switch_neighbors(switch_id, connections):
+def switch_neighbors(switch_id, connections, devices_by_id):
     switch_id = str(switch_id)
     neighbors = []
     for conn in connections:
         conn_from = str(conn.get("from"))
         conn_to = str(conn.get("to"))
+        if str(conn.get("transport") or "cat").lower() == "usb":
+            continue
+        if not is_ping_capable(devices_by_id.get(conn_from)) or not is_ping_capable(devices_by_id.get(conn_to)):
+            continue
         if conn_from == switch_id and can_traverse(conn, switch_id, conn_to):
             neighbors.append(conn_to)
         elif conn_to == switch_id and can_traverse(conn, switch_id, conn_from):
@@ -310,23 +309,19 @@ def build_path_for_route(source, target, selected_route, devices, connections, d
         return direct_path, None if direct_path else "no route in topology"
 
     gateway_ip = selected_route.get("via")
-    gateway = next((device for device in devices if str(device.get("ip") or "") == str(gateway_ip)), None)
+    gateway = next((device for device in devices if normalize_ip_token(device.get("ip")) == normalize_ip_token(gateway_ip)), None)
     if not gateway:
         return None, f"gateway {gateway_ip} not found"
 
     gateway_id = str(gateway.get("id"))
-    to_gateway = find_path(
-        device_ids=device_ids,
-        connections=connections,
-        start_id=source_id,
-        target_id=gateway_id,
-        devices_by_id=devices_by_id,
-    )
+    to_gateway = find_l2_path(source_id, gateway_id, devices_by_id, connections)
     if not to_gateway:
         return None, f"gateway {gateway_ip} unreachable"
 
     if gateway_id == target_id:
         return to_gateway, None
+    if str(gateway.get("type") or "").lower() not in {"router", "gateway"}:
+        return None, f"gateway {gateway_ip} does not support IP forwarding"
 
     to_target = find_path(
         device_ids=device_ids,
@@ -339,15 +334,6 @@ def build_path_for_route(source, target, selected_route, devices, connections, d
         return None, "no route from gateway to target"
 
     return to_gateway + to_target[1:], None
-
-
-def has_static_routes(device):
-    if not device:
-        return False
-    for route in device.get("routes", []) or []:
-        if parse_ipv4_network(route.get("network")) and parse_ipv4_address(route.get("via")):
-            return True
-    return False
 
 
 def can_traverse(conn, src_id, dst_id):
@@ -365,11 +351,11 @@ def can_traverse(conn, src_id, dst_id):
 
 
 def find_l2_path(source_id, target_id, devices_by_id, connections):
-    """BFS over L2-capable devices (pc/switch/hub and similar).
+    """BFS over links with bridge-only intermediate devices.
 
     Used for connected-route (same-subnet / DIRECT) reachability checks.
-    Intermediate nodes must be an L2_TRAVERSAL_TYPES type; routers are allowed
-    through but are not required.  Returns the hop-list or None.
+    Only bridges (switches, hubs, access points) may be intermediate nodes.
+    Routers require an explicit next-hop route. Returns the hop-list or None.
     """
     source_id = str(source_id)
     target_id = str(target_id)
@@ -383,6 +369,10 @@ def find_l2_path(source_id, target_id, devices_by_id, connections):
         conn_from = str(conn.get("from"))
         conn_to = str(conn.get("to"))
         if conn_from not in graph or conn_to not in graph:
+            continue
+        if str(conn.get("transport") or "cat").lower() == "usb":
+            continue
+        if not is_ping_capable(devices_by_id.get(conn_from)) or not is_ping_capable(devices_by_id.get(conn_to)):
             continue
         if can_traverse(conn, conn_from, conn_to):
             graph[conn_from].append(conn_to)
@@ -432,6 +422,10 @@ def find_path(device_ids, connections, start_id, target_id, devices_by_id):
         conn_from = str(conn.get("from"))
         conn_to = str(conn.get("to"))
         if conn_from not in graph or conn_to not in graph:
+            continue
+        if str(conn.get("transport") or "cat").lower() == "usb":
+            continue
+        if not is_ping_capable(devices_by_id.get(conn_from)) or not is_ping_capable(devices_by_id.get(conn_to)):
             continue
         if can_traverse(conn, conn_from, conn_to):
             graph[conn_from].append(conn_to)
@@ -486,6 +480,9 @@ def run_command():
         return pkt_counter[0]
 
     def respond(lines, out_packets, updates=None):
+        if parts and parts[0].lower() == "ping":
+            for packet in out_packets:
+                packet["simulationApplied"] = True
         return jsonify({
             "output": lines,
             "packets": out_packets,
@@ -523,10 +520,13 @@ def run_command():
         devices_by_id = {str(device.get("id")): device for device in devices}
         target_device = find_device_by_token(devices, target_token)
 
-        ip_devices = [d for d in devices if d.get("ip")]
+        ip_devices = [d for d in devices if d.get("ip") and is_ping_capable(d)]
         source = None
         if source_device_id:
             source = devices_by_id.get(source_device_id)
+
+        if source_device_id and not source:
+            return respond(["ping: source device not found"], [])
 
         if source and not is_ping_capable(source):
             output_lines = [
@@ -543,24 +543,13 @@ def run_command():
         target_ip = normalize_ip_token(target.get("ip")) if target else normalized_target_token
 
         if target_device and not is_ping_capable(target_device):
-            output_lines = [
-                f"PING {target_device.get('name')} ({target_token}) 56(84) bytes of data.",
-                f"ping: {target_device.get('name')}: target is a peripheral/non-IP endpoint",
-                "",
-                f"--- {target_device.get('name')} ping statistics ---",
-                f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
-            ]
-            return respond(output_lines, [])
+            return respond([f"ping: {target_device.get('name')}: target is a peripheral/non-IP endpoint"], [])
 
         if target_device and not target_device.get("ip"):
-            output_lines = [
-                f"PING {target_device.get('name')} ({target_token}) 56(84) bytes of data.",
-                f"ping: {target_device.get('name')}: target has no IP configured",
-                "",
-                f"--- {target_device.get('name')} ping statistics ---",
-                f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
-            ]
-            return respond(output_lines, [])
+            return respond([f"ping: {target_device.get('name')}: target has no IP configured"], [])
+
+        if not target_device and parse_ipv4_address(normalized_target_token) is None:
+            return respond([f"ping: {target_token}: unknown host"], [])
 
         if not source:
             if target:
@@ -568,12 +557,18 @@ def run_command():
             if not source:
                 source = ip_devices[0] if ip_devices else None
 
-        if target and source and normalize_ip_token(source.get("ip")) == target_ip:
-            alt_source = next((d for d in ip_devices if normalize_ip_token(d.get("ip")) != target_ip), None)
-            if alt_source:
-                source = alt_source
+        if not source or not is_ping_capable(source) or not source.get("ip"):
+            return respond(["ping: no suitable source host"], [])
 
-        src_ip = source["ip"] if source else "192.168.1.1"
+        if target and str(source.get("id")) == str(target.get("id")):
+            return respond([
+                f"PING {target_ip} ({target_ip}) 56(84) bytes of data.",
+                *[f"64 bytes from {target_ip}: icmp_seq={seq} ttl=64 time=0.00 ms" for seq in range(1, count + 1)],
+                "", f"--- {target_ip} ping statistics ---",
+                f"{count} packets transmitted, {count} received, 0% packet loss, time {count * 1000}ms",
+            ], [])
+
+        src_ip = normalize_ip_token(source["ip"])
         src_mac = device_mac(source)
         dst_mac = device_mac(target) if target else stable_mac_from_seed(target_ip)
         switch_mac_tables = build_switch_mac_tables(devices)
@@ -587,18 +582,8 @@ def run_command():
             route_error = None
             if selected_route:
                 path, route_error = build_path_for_route(source, target, selected_route, devices, connections, devices_by_id)
-            elif has_static_routes(source):
-                route_error = "no matching route"
             else:
-                path = find_path(
-                    device_ids=[str(device.get("id")) for device in devices if device.get("id") is not None],
-                    connections=connections,
-                    start_id=str(source.get("id")) if source else "",
-                    target_id=str(target.get("id")),
-                    devices_by_id=devices_by_id,
-                )
-                if not path:
-                    route_error = "no route in topology"
+                route_error = "no matching route"
 
             if selected_route:
                 route_kind = selected_route.get("kind")
@@ -639,10 +624,12 @@ def run_command():
             hop_names = [devices_by_id.get(path_id, {}).get("name", path_id) for path_id in path]
             output_lines.append(f"route: {' -> '.join(hop_names)}")
 
+            link_simulation = LinkSimulation(connections)
+
             def append_frame_hop(from_id, to_id, hop_time, protocol, frame_info, frame_src_mac, frame_dst_mac, frame_len=74, pkt_src=None, pkt_dst=None):
                 hop_from = devices_by_id.get(from_id, {})
                 hop_to = devices_by_id.get(to_id, {})
-                packets.append({
+                packet = {
                     "no": next_no(), "time": hop_time,
                     "src": pkt_src if pkt_src is not None else (hop_from.get("ip") or hop_from.get("name") or src_ip),
                     "dst": pkt_dst if pkt_dst is not None else (hop_to.get("ip") or hop_to.get("name") or target_ip),
@@ -652,7 +639,10 @@ def run_command():
                     "ingress_port": switch_port_id(to_id, from_id) if is_switch(hop_to) else None,
                     "egress_port": switch_port_id(from_id, to_id) if is_switch(hop_from) else None,
                     "info": frame_info,
-                })
+                }
+                delivered = link_simulation.transmit(packet, from_id, to_id)
+                packets.append(packet)
+                return delivered
 
             def process_switch_forwarding(switch_id, ingress_id, intended_next_id, frame_src_mac, frame_dst_mac, event_time, seq, frame_protocol="ICMP", frame_replica_info=None, force_flood=False):
                 switch_device = devices_by_id.get(switch_id, {})
@@ -678,7 +668,7 @@ def run_command():
 
                 is_broadcast = str(frame_dst_mac).lower() == "ff:ff:ff:ff:ff:ff"
                 known_port = table.get(frame_dst_mac)
-                neighbors = switch_neighbors(switch_id, connections)
+                neighbors = switch_neighbors(switch_id, connections, devices_by_id)
                 egress_ids = []
                 flood_mode = False
                 if force_flood or is_broadcast:
@@ -724,20 +714,11 @@ def run_command():
                     for flood_neighbor in egress_ids:
                         if str(flood_neighbor) == str(intended_next_id):
                             continue
-                        flood_neighbor_device = devices_by_id.get(str(flood_neighbor), {})
-                        packets.append({
-                            "no": next_no(),
-                            "time": round(event_time + 0.0004, 4),
-                            "src": switch_name,
-                            "dst": flood_neighbor_device.get("ip") or flood_neighbor_device.get("name") or flood_neighbor,
-                            "protocol": frame_protocol,
-                            "len": 74,
-                            "src_mac": frame_src_mac,
-                            "dst_mac": frame_dst_mac,
-                            "ingress_port": ingress_port,
-                            "egress_port": switch_port_id(switch_id, flood_neighbor),
-                            "info": frame_replica_info or f"Switch flood replica seq={seq}/256",
-                        })
+                        append_frame_hop(
+                            switch_id, str(flood_neighbor), round(event_time + 0.0004, 4),
+                            frame_protocol, frame_replica_info or f"Switch flood replica seq={seq}/256",
+                            frame_src_mac, frame_dst_mac,
+                        )
 
                 return str(intended_next_id) in {str(egress) for egress in egress_ids}
 
@@ -751,12 +732,13 @@ def run_command():
 
             if not cached_dst_mac:
                 output_lines.append(f"ARP request broadcast for {arp_target_ip}")
+                arp_request_delivered = True
                 request_hops = max(1, len(path) - 1)
                 for hop_index in range(request_hops):
                     from_id = path[hop_index]
                     to_id = path[hop_index + 1]
                     hop_time = round(0.0008 + hop_index * 0.0012, 4)
-                    append_frame_hop(
+                    if not append_frame_hop(
                         from_id,
                         to_id,
                         hop_time,
@@ -767,7 +749,9 @@ def run_command():
                         42,
                         pkt_src=src_ip,
                         pkt_dst="ff:ff:ff:ff:ff:ff",
-                    )
+                    ):
+                        arp_request_delivered = False
+                        break
                     if is_switch(devices_by_id.get(to_id)) and hop_index + 2 < len(path):
                         intended_next = path[hop_index + 2]
                         process_switch_forwarding(
@@ -783,17 +767,18 @@ def run_command():
                             force_flood=True,
                         )
 
-                target_arp_table[src_ip] = src_mac
-                output_lines.append(f"ARP reply from {arp_target_ip} ({dst_mac})")
+                if arp_request_delivered:
+                    target_arp_table[src_ip] = src_mac
+                    output_lines.append(f"ARP reply from {arp_target_ip} ({dst_mac})")
 
                 reverse_path = list(reversed(path))
                 reply_hops = max(1, len(reverse_path) - 1)
-                arp_reply_delivered = True
-                for hop_index in range(reply_hops):
+                arp_reply_delivered = arp_request_delivered
+                for hop_index in range(reply_hops) if arp_request_delivered else []:
                     from_id = reverse_path[hop_index]
                     to_id = reverse_path[hop_index + 1]
                     hop_time = round(0.006 + hop_index * 0.0012, 4)
-                    append_frame_hop(
+                    if not append_frame_hop(
                         from_id,
                         to_id,
                         hop_time,
@@ -804,7 +789,9 @@ def run_command():
                         42,
                         pkt_src=arp_target_ip,
                         pkt_dst=src_ip,
-                    )
+                    ):
+                        arp_reply_delivered = False
+                        break
                     if is_switch(devices_by_id.get(to_id)) and hop_index + 2 < len(reverse_path):
                         intended_next = reverse_path[hop_index + 2]
                         if not process_switch_forwarding(
@@ -845,12 +832,10 @@ def run_command():
             else:
                 output_lines.append(f"ARP table updated: {arp_target_ip} -> {cached_dst_mac}")
 
-            rtt_samples = []
             successful_rtts = []
             for seq in range(1, count + 1):
-                base = round(seq * 0.05 + random.uniform(0, 0.005), 4)
-                rtt_ms = round(random.uniform(0.4, 2.5), 2)
-                rtt_samples.append(rtt_ms)
+                base = max(float(seq), link_simulation.clock)
+                link_simulation.clock = base
 
                 request_hops = max(1, len(path) - 1)
                 request_delivered = True
@@ -864,7 +849,7 @@ def run_command():
                         if str(devices_by_id.get(path[j], {}).get("type") or "").lower() in ("router", "gateway")
                     )
                     req_hop_ttl = max(1, 64 - req_router_decrements)
-                    append_frame_hop(
+                    if not append_frame_hop(
                         from_id,
                         to_id,
                         hop_time,
@@ -875,7 +860,9 @@ def run_command():
                         74,
                         pkt_src=src_ip,
                         pkt_dst=target_ip,
-                    )
+                    ):
+                        request_delivered = False
+                        break
 
                     if is_switch(devices_by_id.get(to_id)) and hop_index + 2 < len(path):
                         intended_next = path[hop_index + 2]
@@ -897,7 +884,7 @@ def run_command():
                             break
 
                 if not request_delivered:
-                    output_lines.append(f"Destination unreachable: layer2 forwarding failure for icmp_seq={seq}")
+                    output_lines.append(f"Destination unreachable: packet delivery failed for icmp_seq={seq}")
                     continue
 
                 reverse_path = list(reversed(path))
@@ -906,14 +893,14 @@ def run_command():
                 for hop_index in range(reply_hops):
                     from_id = reverse_path[hop_index]
                     to_id = reverse_path[hop_index + 1]
-                    hop_time = round(base + rtt_ms / 1000 + hop_index * 0.0015, 4)
+                    hop_time = round(link_simulation.clock + hop_index * 0.0015, 4)
                     # TTL only decrements at L3 router/gateway hops, not switches
                     rep_router_decrements = sum(
                         1 for j in range(1, hop_index + 1)
                         if str(devices_by_id.get(reverse_path[j], {}).get("type") or "").lower() in ("router", "gateway")
                     )
                     rep_hop_ttl = max(1, 64 - rep_router_decrements)
-                    append_frame_hop(
+                    if not append_frame_hop(
                         from_id,
                         to_id,
                         hop_time,
@@ -924,7 +911,9 @@ def run_command():
                         74,
                         pkt_src=target_ip,
                         pkt_dst=src_ip,
-                    )
+                    ):
+                        reply_delivered = False
+                        break
 
                     if is_switch(devices_by_id.get(to_id)) and hop_index + 2 < len(reverse_path):
                         intended_next = reverse_path[hop_index + 2]
@@ -946,12 +935,13 @@ def run_command():
                             break
 
                 if reply_delivered:
+                    rtt_ms = round((link_simulation.clock - base) * 1000, 2)
                     successful_rtts.append(rtt_ms)
                     output_lines.append(
-                        f"64 bytes from {arp_target_ip}: icmp_seq={seq} ttl=64 time={rtt_ms:.2f} ms"
+                        f"64 bytes from {arp_target_ip}: icmp_seq={seq} ttl={rep_hop_ttl} time={rtt_ms:.2f} ms"
                     )
                 else:
-                    output_lines.append(f"Destination unreachable: layer2 forwarding failure for icmp_seq={seq}")
+                    output_lines.append(f"Destination unreachable: packet delivery failed for icmp_seq={seq}")
 
             received_count = len(successful_rtts)
             output_lines += [
@@ -967,7 +957,13 @@ def run_command():
                     f"rtt min/avg/max/mdev = {min(successful_rtts):.3f}/{avg_rtt:.3f}/{max(successful_rtts):.3f}/{mdev:.3f} ms"
                 )
         else:
-            # Target not on network — ARP timeouts
+            if not select_best_route(source, normalized_target_token):
+                return respond([
+                    *output_lines, "Destination unreachable:", "no matching route", "",
+                    f"--- {normalized_target_token} ping statistics ---",
+                    f"{count} packets transmitted, 0 received, 100% packet loss, time {count * 1000}ms",
+                ], [])
+            # Unknown IP on the selected network — no echo replies.
             for seq in range(1, count + 1):
                 t = round(seq * 1.002, 3)
                 packets.append({
@@ -1002,17 +998,22 @@ def run_command():
         devices_by_id = {str(device.get("id")): device for device in devices}
         target_device = find_device_by_token(devices, target_token)
 
-        if not target_device or not target_device.get("ip"):
+        if not target_device or not is_ping_capable(target_device) or not target_device.get("ip"):
             output_lines = [f"traceroute: unknown host {normalized_target_token}"]
             return respond(output_lines, [])
 
         source = devices_by_id.get(source_device_id) if source_device_id else None
+        if source_device_id and not source:
+            return respond(["traceroute: source device not found"], [])
         if not source:
-            source = next((device for device in devices if device.get("ip") and str(device.get("id")) != str(target_device.get("id"))), None)
+            source = next((device for device in devices if is_ping_capable(device) and device.get("ip") and str(device.get("id")) != str(target_device.get("id"))), None)
 
         if not source:
             output_lines = ["traceroute: no suitable source host"]
             return respond(output_lines, [])
+
+        if not is_ping_capable(source):
+            return respond(["traceroute: source does not support ICMP/IP"], [])
 
         if not source.get("ip"):
             output_lines = [f"traceroute: source '{source.get('name')}' has no IP configured"]
@@ -1024,18 +1025,8 @@ def run_command():
         route_error = None
         if selected_route:
             path, route_error = build_path_for_route(source, target_device, selected_route, devices, connections, devices_by_id)
-        elif has_static_routes(source):
-            route_error = "no matching route"
         else:
-            path = find_path(
-                device_ids=[str(device.get("id")) for device in devices if device.get("id") is not None],
-                connections=connections,
-                start_id=str(source.get("id")),
-                target_id=str(target_device.get("id")),
-                devices_by_id=devices_by_id,
-            )
-            if not path:
-                route_error = "no route in topology"
+            route_error = "no matching route"
 
         output_lines.append(f"traceroute to {target_device.get('name')} ({target_ip}), max 30 hops")
         if selected_route:
@@ -1047,17 +1038,19 @@ def run_command():
                     output_lines.append(f"Using default gateway {selected_route.get('via')}")
             else:
                 output_lines.append(f"Route match: {selected_route.get('network')} via DIRECT")
-        elif has_static_routes(source):
+        else:
             output_lines.append("Destination unreachable:")
             output_lines.append("no matching route")
-        else:
-            output_lines.append("Route match: topology path fallback")
 
         if not path:
             output_lines.append(f"traceroute: destination unreachable ({route_error or 'no route in topology'})")
             return respond(output_lines, [])
 
-        hop_count = max(1, len(path) - 1)
+        if len(path) == 1:
+            output_lines.append(f" 1  {source.get('name')} ({target_ip})  0.00 ms")
+            return respond(output_lines, [])
+
+        hop_count = len(path) - 1
         for hop in range(1, hop_count + 1):
             hop_device = devices_by_id.get(path[hop], {})
             hop_name = hop_device.get("name") or path[hop]
