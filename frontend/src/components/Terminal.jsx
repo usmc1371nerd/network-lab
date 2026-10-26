@@ -204,6 +204,7 @@ export default function Terminal({
   onShowPackets,
   onTrafficGenerated,
   onUpdateDevice,
+  onFirewallLogs,
 }) {
   const [history, setHistory] = useState([
     { type: "info", text: 'Network Lab Terminal — type "help" for usage.' },
@@ -223,6 +224,7 @@ export default function Terminal({
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const activeCommandAbortRef = useRef(null);
+  useEffect(() => () => activeCommandAbortRef.current?.abort(), []);
 
   const bluetoothDevices = devices.filter((device) => Boolean(device.btMac));
   const sshSessionDevice = sshSessionDeviceId
@@ -1071,7 +1073,9 @@ export default function Terminal({
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const { output = [], packets: generatedPackets = [], deviceUpdates = [] } = await response.json();
+      const { output = [], packets: generatedPackets = [], deviceUpdates = [], firewallLogs = [] } = await response.json();
+      if (abortController.signal.aborted) return;
+      onFirewallLogs?.(firewallLogs);
       if (Array.isArray(deviceUpdates) && deviceUpdates.length > 0) {
         deviceUpdates.forEach((update) => {
           if (!update?.id) return;

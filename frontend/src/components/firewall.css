@@ -1,0 +1,58 @@
+.device-dashboard { position: absolute; top: 5px; left: 9px; color: #fbbf24; font-size: 10px; }
+.device-dashboard:hover { text-decoration: underline; }
+.device-dashboard:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
+.fw-workspace { display: flex; flex: 1; min-width: 0; background: #f3f4f6; color: #27313b; font-size: 13px; overflow: hidden; }
+.fw-sidebar { width: 210px; flex-shrink: 0; display: flex; flex-direction: column; background: #252b32; color: #d5d9df; overflow: auto; }
+.fw-brand { font-weight: 700; padding: 22px 18px 16px; letter-spacing: 1px; border-bottom: 1px solid #41474f; }
+.fw-brand span { color: #e86c35; font-size: 24px; vertical-align: middle; }
+.fw-brand small, .fw-host small { display: block; color: #a8b0ba; margin-top: 5px; font-size: 11px; letter-spacing: 0; font-weight: 400; }
+.fw-host { padding: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.fw-sidebar nav { display: flex; flex-direction: column; }
+.fw-sidebar nav button { color: #d5d9df; padding: 14px 18px; text-align: left; border-left: 3px solid transparent; }
+.fw-sidebar nav button:hover { background: #323942; }
+.fw-sidebar nav button.active { border-color: #e86c35; background: #3a414a; color: white; }
+.fw-back { color: #eab49b; padding: 18px; text-align: left; margin-top: auto; }
+.fw-content { flex: 1; min-width: 0; overflow: auto; }
+.fw-topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: white; border-bottom: 1px solid #dce1e6; padding: 14px 24px; font-size: 12px; color: #66707b; }
+.fw-page { padding: 24px; }
+.fw-page-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.fw-page h2 { font-size: 24px; font-weight: 500; margin-bottom: 5px; }
+.fw-page p { line-height: 1.6; color: #64707c; margin: 8px 0 14px; }
+.fw-page-heading p { font-size: 12px; margin: 0; }
+.fw-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fw-actions span { font-size: 11px; color: #6b7280; }
+.fw-workspace button:not(nav button):not(.fw-back) { border: 1px solid #cbd1d8; background: #fff; color: #394654; padding: 7px 11px; border-radius: 3px; }
+.fw-workspace button.primary { background: #d75f29; color: #fff; border-color: #d75f29; }
+.fw-workspace button:disabled { opacity: 0.45; cursor: not-allowed; }
+.fw-workspace button:focus-visible, .fw-workspace input:focus-visible, .fw-workspace select:focus-visible { outline: 2px solid #db6b36; outline-offset: 2px; }
+.fw-workspace button:not(:disabled):hover { filter: brightness(0.95); }
+.fw-notice { border-left: 4px solid #df713e; padding: 12px 16px; background: #fff1e8; margin-bottom: 18px; line-height: 1.6; }
+.fw-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-bottom: 20px; }
+.fw-cards article { background: white; padding: 20px; border: 1px solid #dde2e7; border-top: 3px solid #df713e; }
+.fw-cards article span, .fw-cards article small { display: block; color: #687380; font-size: 12px; }
+.fw-cards article strong { display: block; font-size: 36px; font-weight: 400; margin: 10px 0; }
+.fw-panel { background: white; border: 1px solid #dce1e6; padding: 20px; margin-bottom: 18px; }
+.fw-panel h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+.fw-panel ol { margin: 10px 0 0 20px; line-height: 1.9; color: #536170; }
+.fw-table-scroll { overflow-x: auto; margin-bottom: 14px; }
+.fw-workspace table { border-collapse: collapse; width: 100%; text-align: left; font-size: 12px; }
+.fw-workspace th { background: #f3f5f7; color: #66707b; font-weight: 600; padding: 10px 9px; white-space: nowrap; border-bottom: 2px solid #dde2e7; }
+.fw-workspace td { padding: 10px 9px; border-bottom: 1px solid #e8ebee; vertical-align: middle; overflow-wrap: anywhere; }
+.fw-workspace input:not([type=checkbox]), .fw-workspace select { width: 100%; min-width: 110px; border: 1px solid #cbd1d8; border-radius: 3px; padding: 7px 8px; color: #303d4b; background: white; font: inherit; font-size: 12px; }
+.fw-workspace input[type=checkbox] { accent-color: #d75f29; width: 16px; height: 16px; }
+.fw-check { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.fw-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+.fw-tabs button.active { border-bottom: 3px solid #d75f29 !important; }
+.fw-order { white-space: nowrap; }
+.fw-order button { padding: 5px 7px !important; margin-right: 3px; }
+.fw-rules { min-width: 950px; }
+.fw-rules input { min-width: 115px !important; }
+.fw-help { font-size: 11px; }
+.fw-badge { border-radius: 3px; padding: 4px 7px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.fw-badge.pass { background: #e0f3e7; color: #237a46; }
+.fw-badge.block { background: #fce5e2; color: #ac4034; }
+.fw-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.fw-diagnostics { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.fw-diagnostics label { display: flex; flex-direction: column; gap: 7px; min-width: 200px; }
+.fw-output { background: #202830; color: #dbe4ee; padding: 18px; margin-top: 20px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+@media (max-width: 850px) { .fw-sidebar { width: 155px; } .fw-page { padding: 16px; } .fw-cards { grid-template-columns: 1fr; } .fw-topbar { padding: 12px; } }

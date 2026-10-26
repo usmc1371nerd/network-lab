@@ -28,24 +28,27 @@ Connection Types:
 - Bluetooth
 
 Canvas Controls:
+- **Device details**: nodes show their name and IP by default. Click **Details** to expand traffic counters, MAC address, ARP count, and device type; click **Hide details** to collapse them.
 - **Zoom**: Hold Ctrl (or Cmd on Mac) and scroll the mouse wheel to zoom in/out, anchored to cursor
 - **Pan**: Hold Spacebar and drag to move the canvas around (similar to Obsidian note-taking)
 - **No boundaries**: Devices can be placed and dragged anywhere — pan to navigate to off-screen devices
 - **Terminal Toolbar**: Click the toggle button (▲/▼) at bottom-right to collapse/expand the terminal and packet log panel
 
 Device Rules:
-- **IP-capable** (PC, Server, Router, Switch, Gateway, Laptop, Phone, IoT): assignable IPs, pingable, routable
+- **Firewall** is available under **Core**. Choose **Open dashboard** on its node to assign interface subnets, edit ordered ingress rules, inspect live decisions, and run ping diagnostics. Filtering is opt-in; enabled firewalls default to denying unmatched ICMP. JSON backups preserve applied settings.
+- **IP-capable** (PC, Server, Router, Firewall, Switch, Gateway, Laptop, Phone, IoT): assignable IPs, pingable, routable
 - **Non-IP peripherals** (USB HID, USB storage, BLE beacon/sensor/tag): no IP, not pingable, no traffic counters
 - **USB devices are host-local**: a USB mouse on PC-1 is physically attached to PC-1 only — PC-2 cannot address it.
 	`lsusb` run from PC-1's SSH session shows only devices with a canvas edge to PC-1.
 - **Layer 2 transit**: switches, hubs, and access points bridge same-subnet traffic. PCs, servers, laptops, phones, and USB peripherals do not forward traffic between cables.
-- **Routed transit**: routers and gateways can be selected as explicit next hops for destinations outside the source subnet. A canvas path alone does not create an IP route.
+- **Routed transit**: routers, firewalls, and gateways can be selected as explicit next hops for destinations outside the source subnet. A canvas path alone does not create an IP route.
 - **Ping delivery**: the backend applies link direction, blocking, loss, latency, jitter, bandwidth, queue, and RED settings before reporting replies. Failed ARP resolution does not populate the source cache or generate ICMP replies. The frontend uses physical hop IDs to animate and count traffic, and preserves the backend delivery result.
 - **Example**: `PC-1 → PC-2 → Server` cannot carry transit traffic through PC-2. Replace PC-2 with a switch (same subnet), or use a router/gateway with a configured route. USB storage cannot provide a second network path.
-- Routing remains a teaching model with one IP per device; it does not model a full router with per-interface subnets and neighbor discovery.
+- Routing is a teaching model: ordinary routers have one IP, while configured firewalls have per-cable IPv4 interfaces. Endpoint routes are configured explicitly. Firewall filtering covers ping only; TCP/UDP, NAT execution, DHCP, VLANs, VPNs, and cross-command state tracking are not implemented.
 - A single device can connect to multiple other devices.
 - Link type is selectable when creating a connection and editable later from the Link panel.
 - To disconnect devices, click their connection and choose **Disconnect** in the Link panel. To connect a device elsewhere, click **Connect**, then select the two devices for the new link. Disconnecting removes the cable and its link counters; both devices remain on the canvas.
+- To remove a device entirely, click the **×** at the top-right of its node, or open its **i** panel and choose **Remove device**. This removes the device, all attached cables, and their traffic state. Other devices remain on the canvas.
 
 Link Condition Labels:
 - Each edge displays `CAT · loss% · latency±jitter · bwXpps · qX` for both outbound and inbound directions
@@ -114,3 +117,27 @@ Troubleshooting:
 Regression checks:
 - Backend: `.venv/bin/python -m unittest discover -s backend -v` (requires Flask and flask-cors).
 - Frontend: `cd frontend`, then `npm test` and `npm run build`.
+
+Lab backups (no database or account required):
+- Click **Export lab** in the header to download a versioned `.json` backup. Keep the downloaded file; labs are not saved automatically.
+- Click **Import lab** and choose a previously exported JSON file. The file is validated before anything changes. If a lab is already open, confirm its replacement or cancel to keep working.
+- Backups include device names, positions, IP/MAC settings, routes, connections and link conditions, canvas zoom/pan, and expanded device panels. Additional device configuration fields (such as future firewall interfaces, rules, and NAT configuration) are preserved.
+- Import starts a fresh simulation: learned ARP/MAC tables, packet captures, counters, animations, queues, and terminal sessions reset.
+- **Unexported changes** indicates that configuration has changed since the last export/import. Refreshing or leaving prompts a browser warning when there are unexported changes; browsers may suppress that warning, so export before leaving.
+- Invalid or unsupported backups leave the current lab untouched. Version 1 supports files up to 5 MB, 1,000 devices, and 10,000 connections.
+- Backup files stay in your browser/downloads and are not uploaded to the server. This feature does not require database hosting or persistent Render storage.
+
+Firewall dashboard:
+- Add a Firewall under Core, connect its cables, and click **Open dashboard**. The workspace takes the place of the topology while the terminal stays available below it. **Back to topology** returns to the canvas.
+- In **Interfaces**, add LAN, WAN, or OPT entries. Assign each enabled interface to a different connected neighbor and set its IPv4 address/prefix. Put PCs sharing a LAN behind a switch; assign the firewall's LAN interface to that switch. Enabled interface subnets cannot overlap.
+- Click **Apply changes** to use edited settings. Use **Discard** to abandon unapplied edits. Apply or discard pending settings before exporting a lab; a refresh warning covers pending settings too.
+- Configure routes on both endpoints. For LAN `10.10.10.1/24` and a server on `10.10.30.0/24`, run `ip route add 10.10.30.0/24 via 10.10.10.1` from the LAN PC. With firewall WAN `10.10.30.1/24`, add `ip route add 10.10.10.0/24 via 10.10.30.1` from the server. Existing lab routes are preserved.
+- In **Firewall rules**, add an enabled **Pass** rule on LAN, protocol **ICMP**, source **interface-net**, destination **any** (or the server IP/subnet). Enable filtering and apply. Rules are evaluated top to bottom on the incoming interface; the first match wins. No match means Block. `interface-net` refers to the incoming interface's subnet for either address field.
+- Each allowed ICMP request creates state for its reply during that ping command. A newly initiated reverse-direction ping needs its own ingress rule. The simulator does not persist states across commands or require a separate reply rule.
+- **Live log** explains default-deny, explicit rule matches, and state-matched replies, independently of packet capture. The lab keeps up to 500 recent decisions; logs reset on import or refresh. Packet captures also show FIREWALL decision records when enabled.
+- **Routing** lists connected interface networks and configured static routes. **Diagnostics** sends a ping from a selected firewall address. To exercise ingress filtering, ping from a connected endpoint in the terminal.
+- ARP for an off-subnet destination resolves the local gateway, rather than crossing the firewall. Ethernet MAC addresses are updated at routed hops. Neighbor discovery is still simplified; a full per-interface ARP exchange on every routed segment is not modeled.
+- Removing a cable or device disables the attached firewall interface. If no enabled interface remains, filtering is turned off. Reassign and apply interface settings after reconnecting.
+- This is an OPNsense-inspired simulator, not OPNsense software. The implemented rule engine covers IPv4 ICMP ping. Terminal `sendpkt` and `traceroute` do not use it. NAT fields may be preserved in backups, but NAT execution and a NAT editor are not implemented.
+
+Rule behavior references: [OPNsense interface rules](https://docs.opnsense.org/manual/firewall.html) and [interface configuration](https://docs.opnsense.org/manual/interfaces.html).

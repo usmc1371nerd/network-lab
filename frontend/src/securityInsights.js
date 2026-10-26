@@ -4,6 +4,7 @@ const TYPE_PROFILES = {
   phone: { role: "user-endpoint", zone: "user", label: "Mobile device" },
   server: { role: "server", zone: "server", label: "Server" },
   router: { role: "infrastructure", zone: "core", label: "Router" },
+  firewall: { role: "infrastructure", zone: "core", label: "Firewall" },
   switch: { role: "infrastructure", zone: "access", label: "Switch" },
   gateway: { role: "gateway", zone: "gateway", label: "Gateway" },
   beacon: { role: "iot", zone: "iot", label: "BLE beacon" },
@@ -116,6 +117,15 @@ export const getDeviceSecurityInsights = (device, devices, connections) => {
   const componentProfiles = component.map(getSecurityProfile);
   const hasSegmentation = hasExplicitSegmentation(component);
   const profile = getSecurityProfile(device);
+
+  if (device.type === "firewall") {
+    findings.push(makeFinding(
+      "medium",
+      device.firewallEnabled ? "Review ingress firewall rules" : "Firewall filtering is disabled",
+      device.firewallEnabled ? `${device.name} filters simulated ICMP on assigned interfaces. Unmatched packets are blocked.` : `${device.name} is in routing-only mode. Adding the device alone does not enable filtering.`,
+      "Open the dashboard to assign interface subnets and review the first-match rules. NAT, TCP/UDP filtering, and cross-command connection states are not simulated."
+    ));
+  }
 
   if (endpointTypes.has(device.type) && device.ip) {
     findings.push(makeFinding(

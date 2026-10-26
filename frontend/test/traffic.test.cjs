@@ -4,6 +4,15 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { transformSync } = require('esbuild');
 
+const firewallConfigModule = { exports: {} };
+vm.runInNewContext(transformSync(fs.readFileSync(`${__dirname}/../src/firewallConfig.mjs`, 'utf8'), {
+  loader: 'js', format: 'cjs',
+}).code, { module: firewallConfigModule, exports: firewallConfigModule.exports });
+const labFileModule = { exports: {} };
+vm.runInNewContext(transformSync(fs.readFileSync(`${__dirname}/../src/labFile.mjs`, 'utf8'), {
+  loader: 'js', format: 'cjs',
+}).code, { module: labFileModule, exports: labFileModule.exports, TextEncoder, require: () => firewallConfigModule.exports });
+
 // Exercise App's actual traffic callback with deterministic React state and timers.
 const code = transformSync(fs.readFileSync(`${__dirname}/../src/App.jsx`, 'utf8'), {
   loader: 'jsx', format: 'cjs',
@@ -16,6 +25,7 @@ function trafficHarness(connections = [{ from: 'pc', to: 'switch', conditions: {
   let callback;
   let removeConnection;
   let addConnection;
+  let removeDevice;
   const react = {
     useState(initial) {
       const slot = index++;
@@ -27,17 +37,18 @@ function trafficHarness(connections = [{ from: 'pc', to: 'switch', conditions: {
       if (props?.onTrafficGenerated) callback = props.onTrafficGenerated;
       if (props?.onRemoveConnection) removeConnection = props.onRemoveConnection;
       if (props?.onAddConnection) addConnection = props.onAddConnection;
+      if (props?.onRemoveDevice) removeDevice = props.onRemoveDevice;
       return null;
     },
   };
   const module = { exports: {} };
   vm.runInNewContext(code, {
     module, exports: module.exports,
-    require: name => name === 'react' ? react : () => null,
+    require: name => name === 'react' ? react : name === './labFile.mjs' ? labFileModule.exports : () => null,
     setTimeout: () => 1, Date, Math,
   });
   module.exports.default();
-  return { apply: callback, state, removeConnection, addConnection };
+  return { apply: callback, state, removeConnection, addConnection, removeDevice };
 }
 const frame = { src: '10.0.0.1', dst: '10.0.0.2', protocol: 'ICMP', info: 'echo request',
   fromDeviceId: 'pc', toDeviceId: 'switch', simulationApplied: true, status: 'delivered', time: 1.25 };
@@ -118,4 +129,39 @@ test('a disconnected device can connect to a different device with fresh link se
   assert.equal(state[1][0].from, 'pc');
   assert.equal(state[1][0].to, 'server');
   assert.equal(state[1][0].conditions.lossPct, 0);
+});
+
+
+test('removing a device deletes its cables and traffic state while preserving other devices and links', () => {
+  const { apply, state, removeDevice } = trafficHarness([
+    { from: 'pc', to: 'switch' }, { from: 'switch', to: 'server' },
+  ]);
+  state[0][1].mac_table = { 'mac-pc': 'link-switch-pc', 'mac-server': 'link-switch-server' };
+  apply([frame, { ...frame, fromDeviceId: 'switch', toDeviceId: 'server' }]);
+  removeDevice('pc');
+  assert.equal(state[0].length, 2);
+  assert.equal(state[0].some(device => device.id === 'pc'), false);
+  assert.equal(state[1].length, 1);
+  assert.equal(state[1][0].to, 'server');
+  assert.equal(state[4].pc, undefined);
+  assert.equal(state[5].pc, undefined);
+  assert.equal(state[6]['pc->switch'], undefined);
+  assert.equal(state[6]['switch->server'].forward, 1);
+  assert.equal(state[7].length, 1);
+  assert.equal(state[7][0].linkKey, 'switch->server');
+  assert.equal(state[0][0].mac_table['mac-pc'], undefined);
+  assert.equal(state[0][0].mac_table['mac-server'], 'link-switch-server');
+});
+
+test('disconnecting the last firewall interface disables it and filtering without losing rules', () => {
+  const { state, removeConnection } = trafficHarness();
+  state[0][0].type = 'firewall';
+  state[0][0].firewallEnabled = true;
+  state[0][0].interfaces = [{ id: 'lan', name: 'LAN', address: '10.0.0.1/24', neighborId: 'switch', enabled: true }];
+  state[0][0].rules = [{ id: 'pass-lan', interfaceId: 'lan' }];
+  removeConnection('pc', 'switch');
+  assert.equal(state[0][0].interfaces[0].enabled, false);
+  assert.equal(state[0][0].interfaces[0].neighborId, '');
+  assert.equal(state[0][0].firewallEnabled, false);
+  assert.equal(state[0][0].rules.length, 1);
 });

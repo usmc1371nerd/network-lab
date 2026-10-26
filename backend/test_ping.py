@@ -183,6 +183,21 @@ class PingRegressionTests(unittest.TestCase):
         self.assert_received(result, 4)
         self.assertFalse(any(p.get('toDeviceId') == 'storage' for p in result['packets']))
 
+    def test_firewall_can_be_an_explicit_gateway_and_decrements_ttl(self):
+        self.server['ip'] = '192.168.2.100'
+        self.pc['routes'] = [{'network': '0.0.0.0/0', 'via': '10.10.10.254'}]
+        firewall = host('firewall', 'firewall', '10.10.10.254/24')
+        result = self.run_ping([self.pc, firewall, self.server],
+            [link('pc-1', 'firewall'), link('firewall', 'server')])
+        self.assert_received(result, 4)
+        self.assertTrue(all('ttl=63' in line for line in result['output'] if line.startswith('64 bytes')))
+
+    def test_firewall_does_not_bridge_a_flat_subnet_without_a_next_hop_route(self):
+        firewall = host('firewall', 'firewall', '10.10.10.254/24')
+        result = self.run_ping([self.pc, firewall, self.server],
+            [link('pc-1', 'firewall'), link('firewall', 'server')])
+        self.assert_received(result, 0)
+
 
 if __name__ == '__main__':
     unittest.main()

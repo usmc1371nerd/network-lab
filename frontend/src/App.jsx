@@ -3,6 +3,8 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import NetworkCanvas from "./components/NetworkCanvas";
 import Terminal from "./components/Terminal";
 import PacketLog from "./components/PacketLog";
+import FirewallDashboard from "./components/FirewallDashboard";
+import { DEFAULT_VIEW, MAX_LAB_FILE_BYTES, labConfiguration, configurationSignature, serializeLab, parseLab } from "./labFile.mjs";
 
 let _id = 1;
 const uid = () => String(_id++);
@@ -68,6 +70,86 @@ export default function App() {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const linkRuntimeRef = useRef({});
   const flightTimeoutsRef = useRef([]);
+  const [canvasView, setCanvasView] = useState(DEFAULT_VIEW);
+  const [labSession, setLabSession] = useState(0);
+  const [exportedSignature, setExportedSignature] = useState(() => configurationSignature(labConfiguration([], [], DEFAULT_VIEW)));
+  const [fileMessage, setFileMessage] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [activeFirewallId, setActiveFirewallId] = useState(null);
+  const [firewallLogs, setFirewallLogs] = useState([]);
+  const [firewallPending, setFirewallPending] = useState(false);
+  const importInputRef = useRef(null);
+  const configuration = labConfiguration(devices, connections, canvasView);
+  const signature = configurationSignature(configuration);
+  const hasUnexportedChanges = signature !== exportedSignature || firewallPending;
+  const currentLabRef = useRef(null);
+  currentLabRef.current = { configuration, signature, hasUnexportedChanges };
+
+  useEffect(() => {
+    if (!hasUnexportedChanges) return;
+    const warnBeforeLeaving = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [hasUnexportedChanges]);
+
+  const exportLab = () => {
+    try {
+      const text = serializeLab(devices, connections, canvasView);
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `network-lab-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setExportedSignature(signature);
+      setFileMessage({ kind: "success", text: "Backup download started. Keep the JSON file to restore your lab later." });
+    } catch (error) {
+      setFileMessage({ kind: "error", text: `Export failed: ${error.message}` });
+    }
+  };
+
+  const importLab = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      if (file.size > MAX_LAB_FILE_BYTES) throw new Error("Lab files must be 5 MB or smaller.");
+      const restored = parseLab(await file.text());
+      const current = currentLabRef.current;
+      if ((current.configuration.devices.length || current.configuration.connections.length || current.hasUnexportedChanges)
+          && !window.confirm("Replace the current lab with this backup? Export your current lab first if you want to keep it. Running traffic and terminal sessions will be cleared.")) {
+        return;
+      }
+      flightTimeoutsRef.current.forEach(clearTimeout);
+      flightTimeoutsRef.current = [];
+      linkRuntimeRef.current = {};
+      setDevices(restored.devices);
+      setConnections(restored.connections);
+      setCanvasView(restored.view);
+      setCapturedPackets([]);
+      setDisplayedPackets([]);
+      setTrafficStats({});
+      setIpTrafficStats({});
+      setLinkTrafficStats({});
+      setPacketFlights([]);
+      setFirewallLogs([]);
+      setActiveFirewallId(null);
+      setFirewallPending(false);
+      setLabSession((previous) => previous + 1);
+      setExportedSignature(configurationSignature(restored));
+      setFileMessage({ kind: "success", text: `Imported ${file.name}. Configuration restored; simulation and terminal sessions reset.` });
+    } catch (error) {
+      setFileMessage({ kind: "error", text: `Import failed: ${error.message} Your current lab has not been changed.` });
+    } finally {
+      setImporting(false);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -143,6 +225,7 @@ export default function App() {
       pc: "PC",
       server: "Server",
       router: "Router",
+      firewall: "Firewall",
       switch: "Switch",
       phone: "Phone",
       laptop: "Laptop",
@@ -162,7 +245,8 @@ export default function App() {
       "usb-audio": "Audio",
       "usb-printer": "Printer",
     };
-    const id = uid();
+    let id = uid();
+    while (devices.some((device) => device.id === id)) id = uid();
     setDevices((prev) => [
       ...prev,
       {
@@ -171,6 +255,7 @@ export default function App() {
         name: `${names[type] || type}-${id}`,
         ip: "",
         routes: [],
+        ...(type === "firewall" ? { interfaces: [], rules: [], nat: [] } : {}),
         mac: NON_IP_CAPABLE_TYPES.has(type) ? "" : makeStableMac(id),
         arp_table: NON_IP_CAPABLE_TYPES.has(type) ? undefined : {},
         mac_table: type === "switch" ? {} : undefined,
@@ -179,7 +264,7 @@ export default function App() {
         y,
       },
     ]);
-  }, []);
+  }, [devices]);
 
   const updateDevice = useCallback((id, fields) => {
     setDevices((prev) =>
@@ -188,7 +273,27 @@ export default function App() {
   }, []);
 
   const removeDevice = useCallback((id) => {
-    setDevices((prev) => prev.filter((d) => d.id !== id));
+    setActiveFirewallId((previous) => previous === id ? null : previous);
+    setFirewallLogs((previous) => previous.filter(event => event.firewallId !== id));
+    setDevices((prev) => prev.filter((d) => d.id !== id).map((device) => {
+      if (device.type === "firewall") {
+        device = { ...device, interfaces: (device.interfaces || []).map(item => item.neighborId === id ? { ...item, neighborId: "", enabled: false } : item) };
+        if (!device.interfaces.some(item => item.enabled)) device.firewallEnabled = false;
+      }
+      if (!device.mac_table) return device;
+      return {
+        ...device,
+        mac_table: Object.fromEntries(Object.entries(device.mac_table).filter(
+          ([, port]) => port !== `link-${device.id}-${id}`
+        )),
+      };
+    }));
+    Object.keys(linkRuntimeRef.current).forEach((key) => {
+      const [fromId, toId] = key.split("->");
+      if (fromId === String(id) || toId === String(id)) {
+        delete linkRuntimeRef.current[key];
+      }
+    });
     setConnections((prev) =>
       prev.filter((c) => c.from !== id && c.to !== id)
     );
@@ -206,7 +311,7 @@ export default function App() {
       const next = {};
       Object.entries(prev).forEach(([key, value]) => {
         const [fromId, toId] = key.split("->");
-        if (fromId !== id && toId !== id) {
+        if (fromId !== String(id) && toId !== String(id)) {
           next[key] = value;
         }
       });
@@ -231,6 +336,10 @@ export default function App() {
     setPacketFlights((prev) => prev.filter((flight) => !keys.includes(flight.linkKey)));
     setDevices((prev) => prev.map((device) => {
       const neighbor = device.id === from ? to : device.id === to ? from : null;
+      if (neighbor !== null && device.type === "firewall") {
+        device = { ...device, interfaces: (device.interfaces || []).map(item => item.neighborId === neighbor ? { ...item, neighborId: "", enabled: false } : item) };
+        if (!device.interfaces.some(item => item.enabled)) device.firewallEnabled = false;
+      }
       if (neighbor === null || !device.mac_table) return device;
       const mac_table = Object.fromEntries(Object.entries(device.mac_table).filter(
         ([, port]) => port !== `link-${device.id}-${neighbor}`
@@ -332,7 +441,7 @@ export default function App() {
       const dstId = devices.find((d) => String(d.id) === String(packet.toDeviceId))?.id
         ?? findDeviceIdByAddress(packet.dst);
 
-      if (["ROUTE", "L2"].includes(String(packet.protocol || "").toUpperCase())) {
+      if (["ROUTE", "L2", "FIREWALL"].includes(String(packet.protocol || "").toUpperCase())) {
         deliveredPackets.push(packet);
         return;
       }
@@ -553,18 +662,55 @@ export default function App() {
     setDisplayedPackets(capturedPackets);
   }, [capturedPackets]);
 
+  const appendFirewallLogs = useCallback((events) => {
+    if (!Array.isArray(events) || !events.length) return;
+    setFirewallLogs((previous) => [...previous, ...events.map(event => ({ ...event, recordedAt: Date.now() }))].slice(-500));
+  }, []);
+  const activeFirewall = devices.find(device => device.id === activeFirewallId && device.type === "firewall");
+
   return (
     <div className="app">
       <header className="app-header">
         <span className="app-logo">⬡</span>
         <h1 className="app-title">Network Lab</h1>
         <span className="app-subtitle">Interactive Network Simulator</span>
+        <div className="lab-file-actions">
+          <span className={`lab-save-status${hasUnexportedChanges ? " dirty" : ""}`}>
+            {hasUnexportedChanges ? "Unexported changes" : "No unexported changes"}
+          </span>
+          <button className="lab-file-button" onClick={exportLab} disabled={firewallPending} title={firewallPending ? "Apply or discard firewall settings before exporting" : "Download your lab as JSON"}>Export lab</button>
+          <button className="lab-file-button" onClick={() => importInputRef.current?.click()} disabled={importing}>
+            {importing ? "Importing…" : "Import lab"}
+          </button>
+          <input ref={importInputRef} type="file" accept=".json,application/json" aria-label="Import lab JSON file" hidden onChange={importLab} />
+        </div>
       </header>
+      <div className="lab-file-notice">
+        Export your lab before closing or refreshing. Labs are not saved automatically.
+        {firewallPending && <span className="lab-file-message">Apply or discard firewall settings before exporting.</span>}
+        {fileMessage && <span className={`lab-file-message ${fileMessage.kind}`} role={fileMessage.kind === "error" ? "alert" : "status"}>{fileMessage.text}</span>}
+      </div>
 
       <div className="app-body">
-        <div className="panel panel-canvas">
+        {activeFirewall && <FirewallDashboard
+          key={`${labSession}-${activeFirewall.id}`}
+          device={activeFirewall} devices={devices} connections={connections}
+          logs={firewallLogs.filter(event => event.firewallId === activeFirewall.id)}
+          onUpdateDevice={updateDevice} onBack={() => setActiveFirewallId(null)}
+          onPendingChange={setFirewallPending}
+          onClearLogs={() => setFirewallLogs(previous => previous.filter(event => event.firewallId !== activeFirewall.id))}
+          onDiagnosticResult={(result) => {
+            appendFirewallLogs(result.firewallLogs);
+            applyTrafficPackets(result.packets || []);
+            (result.deviceUpdates || []).forEach(update => updateDevice(update.id, update));
+          }}
+        />}
+        <div className="panel panel-canvas" style={activeFirewall ? { display: "none" } : undefined}>
           <div className="panel-label">TOPOLOGY</div>
           <NetworkCanvas
+            key={labSession}
+            initialView={canvasView}
+            onViewChange={setCanvasView}
             devices={devices}
             connections={connections}
             trafficStats={trafficStats}
@@ -577,6 +723,7 @@ export default function App() {
             onAddConnection={addConnection}
             onRemoveConnection={removeConnection}
             onUpdateConnection={updateConnection}
+            onOpenFirewall={setActiveFirewallId}
           />
         </div>
       </div>
@@ -596,6 +743,7 @@ export default function App() {
             <div className="panel panel-terminal">
               <div className="panel-label">TERMINAL</div>
               <Terminal
+                key={labSession}
                 devices={devices}
                 connections={connections}
                 packets={capturedPackets}
@@ -604,6 +752,7 @@ export default function App() {
                 onShowPackets={showCapturedPackets}
                 onTrafficGenerated={applyTrafficPackets}
                 onUpdateDevice={updateDevice}
+                onFirewallLogs={appendFirewallLogs}
               />
             </div>
 

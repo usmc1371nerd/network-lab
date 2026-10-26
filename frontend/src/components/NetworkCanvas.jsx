@@ -9,6 +9,7 @@ const DEVICE_ICONS = {
   pc: "💻",
   server: "🖥️",
   router: "📡",
+  firewall: "🛡️",
   switch: "🔀",
   phone: "📱",
   laptop: "💼",
@@ -32,6 +33,7 @@ const DEVICE_LABELS = {
   pc: "PC",
   server: "Server",
   router: "Router",
+  firewall: "Firewall",
   switch: "Switch",
   phone: "Phone",
   laptop: "Laptop",
@@ -54,7 +56,7 @@ const DEVICE_LABELS = {
 const PALETTE_GROUPS = [
   {
     title: "Core",
-    devices: ["pc", "server", "router", "switch"],
+    devices: ["pc", "server", "router", "switch", "firewall"],
   },
   {
     title: "Bluetooth",
@@ -69,8 +71,9 @@ const PALETTE_GROUPS = [
     devices: ["usb-storage", "usb-keyboard", "usb-mouse", "usb-webcam", "usb-audio", "usb-printer"],
   },
 ];
-const NODE_W = 136;
-const NODE_H = 68;
+const NODE_W = 220;
+const NODE_H = 96;
+const EXPANDED_NODE_H = 184;
 const USB_PERIPHERAL_TYPES = new Set([
   "usb-storage",
   "usb-keyboard",
@@ -126,11 +129,16 @@ export default function NetworkCanvas({
   onAddConnection,
   onRemoveConnection,
   onUpdateConnection,
+  initialView,
+  onViewChange,
+  onOpenFirewall,
 }) {
   const canvasRef = useRef(null);
   const draggingRef = useRef(null);
   const panRef = useRef(null);
 
+  const [expandedDevices, setExpandedDevices] = useState(initialView?.expandedDevices || {});
+  const nodeHeight = (device) => expandedDevices[device.id] ? EXPANDED_NODE_H : NODE_H;
   const [connectMode, setConnectMode] = useState(false);
   const [connectSource, setConnectSource] = useState(null);
   const [connectDirection, setConnectDirection] = useState("both");
@@ -143,9 +151,13 @@ export default function NetworkCanvas({
   const [linkPreset, setLinkPreset] = useState("stable");
   const [clockMs, setClockMs] = useState(Date.now());
   const [securityInspector, setSecurityInspector] = useState(null);
-  const [canvasScale, setCanvasScale] = useState(1);
-  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
+  const [canvasScale, setCanvasScale] = useState(initialView?.scale ?? 1);
+  const [canvasPan, setCanvasPan] = useState(initialView?.pan || { x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+
+  useEffect(() => {
+    onViewChange?.({ scale: canvasScale, pan: canvasPan, expandedDevices });
+  }, [canvasScale, canvasPan, expandedDevices, onViewChange]);
 
   const toWorldCoords = (clientX, clientY) => {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -161,6 +173,24 @@ export default function NetworkCanvas({
     const timer = setInterval(() => setClockMs(Date.now()), 40);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (connectSource && !devices.some((device) => device.id === connectSource)) {
+      setConnectSource(null);
+      setConnectMode(false);
+    }
+    if (editingId && !devices.some((device) => device.id === editingId)) {
+      setEditingId(null);
+    }
+    if (selectedConnectionKey && !connections.some(
+      (conn) => `${conn.from}->${conn.to}` === selectedConnectionKey
+    )) {
+      setSelectedConnectionKey(null);
+    }
+    if (draggingRef.current && !devices.some((device) => device.id === draggingRef.current.id)) {
+      draggingRef.current = null;
+    }
+  }, [devices, connections, connectSource, editingId, selectedConnectionKey]);
 
   useEffect(() => {
     if (!securityInspector) return;
@@ -336,7 +366,7 @@ export default function NetworkCanvas({
     setConnectSource(null);
   };
 
-  const center = (d) => ({ cx: d.x + NODE_W / 2, cy: d.y + NODE_H / 2 });
+  const center = (d) => ({ cx: d.x + NODE_W / 2, cy: d.y + nodeHeight(d) / 2 });
 
   const pointOnQuadratic = (startPoint, controlPoint, endPoint, t) => {
     const oneMinusT = 1 - t;
@@ -981,13 +1011,19 @@ export default function NetworkCanvas({
             className={`device-node device-${device.type}${
               connectSource === device.id ? " connect-source" : ""
             }`}
-            style={{ left: device.x, top: device.y, width: NODE_W, height: NODE_H }}
+            style={{ left: device.x, top: device.y, width: NODE_W, height: nodeHeight(device) }}
             onMouseDown={(e) => onDeviceMouseDown(e, device)}
             onClick={(e) => onDeviceClick(e, device)}
           >
+            {device.type === "firewall" && <button className="device-dashboard"
+              onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); onOpenFirewall?.(device.id); }}
+            >Open dashboard</button>}
             <button
               className="device-delete"
               title="Remove device"
+              aria-label={`Remove ${device.name}`}
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onRemoveDevice(device.id);
@@ -1008,20 +1044,6 @@ export default function NetworkCanvas({
             <span className="device-icon">{DEVICE_ICONS[device.type]}</span>
             <div className="device-info">
               <div className="device-name">{device.name}</div>
-              {!NON_IP_CAPABLE_TYPES.has(device.type) && (
-                <>
-                  <div className="device-traffic">
-                    <span className="traffic-label">DEV</span>
-                    <span className="traffic-out">↑ {(trafficStats?.[device.id]?.outbound) || 0}</span>
-                    <span className="traffic-in">↓ {(trafficStats?.[device.id]?.inbound) || 0}</span>
-                  </div>
-                  <div className="device-traffic device-traffic-ip">
-                    <span className="traffic-label">IP</span>
-                    <span className="traffic-out">↑ {(ipTrafficStats?.[device.id]?.outbound) || 0}</span>
-                    <span className="traffic-in">↓ {(ipTrafficStats?.[device.id]?.inbound) || 0}</span>
-                  </div>
-                </>
-              )}
               {NON_IP_CAPABLE_TYPES.has(device.type) ? (
                 <div className="device-ip" title="Peripheral endpoint (no IP)">
                   <span className="ip-placeholder">non-IP peripheral</span>
@@ -1053,10 +1075,42 @@ export default function NetworkCanvas({
                   )}
                 </div>
               )}
-              {!NON_IP_CAPABLE_TYPES.has(device.type) && device.type !== "switch" && (
-                <div className="device-meta" title="Layer-2 / ARP cache summary">
-                  <span className="device-meta-item">MAC: {device.mac || "unassigned"}</span>
-                  <span className="device-meta-item">ARP entries: {Object.keys(device.arp_table || {}).length}</span>
+              <button
+                className="device-details-toggle"
+                aria-expanded={Boolean(expandedDevices[device.id])}
+                aria-controls={`device-details-${device.id}`}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedDevices((prev) => ({ ...prev, [device.id]: !prev[device.id] }));
+                }}
+              >
+                {expandedDevices[device.id] ? "▴ Hide details" : "▾ Details"}
+              </button>
+              {expandedDevices[device.id] && (
+                <div className="device-details" id={`device-details-${device.id}`}>
+                  <div className="device-meta-item">Type: {DEVICE_LABELS[device.type] || device.type}</div>
+                  {device.type === "firewall" && <div className="device-firewall-status">{device.firewallEnabled ? "Filtering active · default deny" : "Routing only · filtering off"}</div>}
+                  {!NON_IP_CAPABLE_TYPES.has(device.type) && (
+                    <>
+                      <div className="device-traffic">
+                        <span className="traffic-label">DEV</span>
+                        <span className="traffic-out">↑ {(trafficStats?.[device.id]?.outbound) || 0}</span>
+                        <span className="traffic-in">↓ {(trafficStats?.[device.id]?.inbound) || 0}</span>
+                      </div>
+                      <div className="device-traffic device-traffic-ip">
+                        <span className="traffic-label">IP</span>
+                        <span className="traffic-out">↑ {(ipTrafficStats?.[device.id]?.outbound) || 0}</span>
+                        <span className="traffic-in">↓ {(ipTrafficStats?.[device.id]?.inbound) || 0}</span>
+                      </div>
+                    </>
+                  )}
+                  {!NON_IP_CAPABLE_TYPES.has(device.type) && (
+                    <div className="device-meta" title="Layer-2 / ARP cache summary">
+                      <span className="device-meta-item">MAC: {device.mac || "unassigned"}</span>
+                      <span className="device-meta-item">ARP entries: {Object.keys(device.arp_table || {}).length}</span>
+                </div>
+              )}
                 </div>
               )}
             </div>
@@ -1096,6 +1150,18 @@ export default function NetworkCanvas({
             <div className="security-panel-note">
               Topology-based guidance only. These findings are educational hints, not live scanning results.
             </div>
+
+            {inspectedDevice && (
+              <button
+                className="link-editor-disconnect"
+                onClick={() => {
+                  onRemoveDevice(inspectedDevice.id);
+                  setSecurityInspector(null);
+                }}
+              >
+                Remove device
+              </button>
+            )}
 
             <div className="security-findings">
               {securityFindings.map((finding) => (
