@@ -45,6 +45,7 @@ Device Rules:
 - Routing remains a teaching model with one IP per device; it does not model a full router with per-interface subnets and neighbor discovery.
 - A single device can connect to multiple other devices.
 - Link type is selectable when creating a connection and editable later from the Link panel.
+- To disconnect devices, click their connection and choose **Disconnect** in the Link panel. To connect a device elsewhere, click **Connect**, then select the two devices for the new link. Disconnecting removes the cable and its link counters; both devices remain on the canvas.
 
 Link Condition Labels:
 - Each edge displays `CAT · loss% · latency±jitter · bwXpps · qX` for both outbound and inbound directions

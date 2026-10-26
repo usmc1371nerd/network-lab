@@ -14,6 +14,8 @@ function trafficHarness(connections = [{ from: 'pc', to: 'switch', conditions: {
   const state = [];
   let index = 0;
   let callback;
+  let removeConnection;
+  let addConnection;
   const react = {
     useState(initial) {
       const slot = index++;
@@ -21,7 +23,12 @@ function trafficHarness(connections = [{ from: 'pc', to: 'switch', conditions: {
       return [state[slot], value => { state[slot] = typeof value === 'function' ? value(state[slot]) : value; }];
     },
     useCallback: fn => fn, useEffect() {}, useRef: value => ({ current: value }),
-    createElement(type, props) { if (props?.onTrafficGenerated) callback = props.onTrafficGenerated; return null; },
+    createElement(type, props) {
+      if (props?.onTrafficGenerated) callback = props.onTrafficGenerated;
+      if (props?.onRemoveConnection) removeConnection = props.onRemoveConnection;
+      if (props?.onAddConnection) addConnection = props.onAddConnection;
+      return null;
+    },
   };
   const module = { exports: {} };
   vm.runInNewContext(code, {
@@ -30,7 +37,7 @@ function trafficHarness(connections = [{ from: 'pc', to: 'switch', conditions: {
     setTimeout: () => 1, Date, Math,
   });
   module.exports.default();
-  return { apply: callback, state };
+  return { apply: callback, state, removeConnection, addConnection };
 }
 const frame = { src: '10.0.0.1', dst: '10.0.0.2', protocol: 'ICMP', info: 'echo request',
   fromDeviceId: 'pc', toDeviceId: 'switch', simulationApplied: true, status: 'delivered', time: 1.25 };
@@ -81,4 +88,34 @@ test('locally generated traffic still applies link conditions', () => {
   assert.equal(result.deliveredPackets.length, 0);
   assert.equal(result.droppedPackets.length, 1);
   assert.match(result.droppedPackets[0].info, /loss 100%/);
+});
+
+
+test('disconnect removes only the selected link, its counters, flights, and switch port entries', () => {
+  const { apply, state, removeConnection } = trafficHarness([
+    { from: 'pc', to: 'switch' }, { from: 'switch', to: 'server' },
+  ]);
+  state[0][1].mac_table = { 'mac-pc': 'link-switch-pc', 'mac-server': 'link-switch-server' };
+  apply([frame, { ...frame, fromDeviceId: 'switch', toDeviceId: 'server' }]);
+  removeConnection('switch', 'pc');
+  assert.equal(state[1].length, 1);
+  assert.equal(state[1][0].to, 'server');
+  assert.equal(state[6]['pc->switch'], undefined);
+  assert.equal(state[6]['switch->server'].forward, 1);
+  assert.equal(state[7].length, 1);
+  assert.equal(state[7][0].linkKey, 'switch->server');
+  assert.equal(state[0].length, 3);
+  assert.equal(state[0][1].mac_table['mac-pc'], undefined);
+  assert.equal(state[0][1].mac_table['mac-server'], 'link-switch-server');
+});
+
+test('a disconnected device can connect to a different device with fresh link settings', () => {
+  const { state, removeConnection, addConnection } = trafficHarness();
+  removeConnection('pc', 'switch');
+  assert.equal(state[1].length, 0);
+  addConnection('pc', 'server', 'both', 'cat');
+  assert.equal(state[1].length, 1);
+  assert.equal(state[1][0].from, 'pc');
+  assert.equal(state[1][0].to, 'server');
+  assert.equal(state[1][0].conditions.lossPct, 0);
 });

@@ -124,6 +124,7 @@ export default function NetworkCanvas({
   onUpdateDevice,
   onRemoveDevice,
   onAddConnection,
+  onRemoveConnection,
   onUpdateConnection,
 }) {
   const canvasRef = useRef(null);
@@ -581,6 +582,20 @@ export default function NetworkCanvas({
             <>
               <div className="link-editor-name">
                 {selectedSource?.name || selectedConnection.from} → {selectedTarget?.name || selectedConnection.to}
+              </div>
+              <button
+                className="link-editor-disconnect"
+                onClick={() => {
+                  onRemoveConnection(selectedConnection.from, selectedConnection.to);
+                  setSelectedConnectionKey(null);
+                  setSecurityInspector(null);
+                  cancelConnect();
+                }}
+              >
+                Disconnect
+              </button>
+              <div className="link-editor-empty">
+                To change endpoints, disconnect this link, then use Connect to select two devices.
               </div>
               <div className="link-editor-row">
                 <select

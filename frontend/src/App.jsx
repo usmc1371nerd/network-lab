@@ -217,6 +217,28 @@ export default function App() {
     );
   }, []);
 
+  const removeConnection = useCallback((from, to) => {
+    setConnections((prev) => prev.filter((conn) =>
+      !((conn.from === from && conn.to === to) || (conn.from === to && conn.to === from))
+    ));
+    const keys = [`${from}->${to}`, `${to}->${from}`];
+    keys.forEach((key) => delete linkRuntimeRef.current[key]);
+    setLinkTrafficStats((prev) => {
+      const next = { ...prev };
+      keys.forEach((key) => delete next[key]);
+      return next;
+    });
+    setPacketFlights((prev) => prev.filter((flight) => !keys.includes(flight.linkKey)));
+    setDevices((prev) => prev.map((device) => {
+      const neighbor = device.id === from ? to : device.id === to ? from : null;
+      if (neighbor === null || !device.mac_table) return device;
+      const mac_table = Object.fromEntries(Object.entries(device.mac_table).filter(
+        ([, port]) => port !== `link-${device.id}-${neighbor}`
+      ));
+      return { ...device, mac_table };
+    }));
+  }, []);
+
   const addConnection = useCallback((from, to, direction = "both", transport = "cat") => {
     setConnections((prev) => {
       const existing = prev.find(
@@ -553,6 +575,7 @@ export default function App() {
             onUpdateDevice={updateDevice}
             onRemoveDevice={removeDevice}
             onAddConnection={addConnection}
+            onRemoveConnection={removeConnection}
             onUpdateConnection={updateConnection}
           />
         </div>
