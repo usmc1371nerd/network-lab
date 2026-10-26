@@ -304,8 +304,16 @@ export default function App() {
     };
 
     newPkts.forEach((packet) => {
-      const srcId = findDeviceIdByAddress(packet.src);
-      const dstId = findDeviceIdByAddress(packet.dst);
+      // Network addresses identify endpoints; hop IDs identify the physical cable.
+      const srcId = devices.find((d) => String(d.id) === String(packet.fromDeviceId))?.id
+        ?? findDeviceIdByAddress(packet.src);
+      const dstId = devices.find((d) => String(d.id) === String(packet.toDeviceId))?.id
+        ?? findDeviceIdByAddress(packet.dst);
+
+      if (["ROUTE", "L2"].includes(String(packet.protocol || "").toUpperCase())) {
+        deliveredPackets.push(packet);
+        return;
+      }
 
       if (!srcId || !dstId) {
         deliveredPackets.push(packet);
@@ -335,82 +343,98 @@ export default function App() {
         dropPacket("no-link", null, false);
         return;
       }
-
-      const direction = conn.direction || "both";
-      const isForward = conn.from === srcId && conn.to === dstId;
-      const isReverse = conn.to === srcId && conn.from === dstId;
-      const allowed =
-        direction === "both" ||
-        (direction === "forward" && isForward) ||
-        (direction === "reverse" && isReverse);
       const linkKey = `${conn.from}->${conn.to}`;
-
-      if (!allowed) {
-        dropPacket("direction-block", linkKey, true);
+      if (packet.simulationApplied && packet.status === "dropped") {
+        droppedPackets.push(packet);
+        const reason = packet.dropReason || "";
+        linkIncrements.push({
+          type: "drop", key: linkKey,
+          blocked: ["blocked", "direction-block"].includes(reason),
+          queue: reason.startsWith("queue-full"), red: reason.startsWith("red"),
+        });
         return;
       }
+      let delayedPacket = packet;
+      let effectiveLatencyMs = 0;
+      let serviceIntervalMs = 0;
 
-      const conditions = { ...DEFAULT_LINK_CONDITIONS, ...(conn.conditions || {}) };
-      if (conditions.blocked) {
-        dropPacket("blocked", linkKey, true);
-        return;
-      }
+      // Backend ping delivery already determines replies, statistics and caches.
+      if (!packet.simulationApplied) {
+        const direction = conn.direction || "both";
+        const isForward = conn.from === srcId && conn.to === dstId;
+        const isReverse = conn.to === srcId && conn.from === dstId;
+        const allowed =
+          direction === "both" ||
+          (direction === "forward" && isForward) ||
+          (direction === "reverse" && isReverse);
 
-      const lossPct = Math.max(0, Math.min(100, toNumber(conditions.lossPct, 0)));
-      if (Math.random() * 100 < lossPct) {
-        dropPacket(`loss ${lossPct}%`, linkKey, false);
-        return;
-      }
+        if (!allowed) {
+          dropPacket("direction-block", linkKey, true);
+          return;
+        }
 
-      const latencyMs = Math.max(0, toNumber(conditions.latencyMs, 0));
-      const jitterMs = Math.max(0, toNumber(conditions.jitterMs, 0));
-      const queueLimitPkts = Math.max(1, Math.trunc(toNumber(conditions.queueLimitPkts, 200)));
-      const bandwidthPps = Math.max(1, toNumber(conditions.bandwidthPps, 100));
-      const serviceIntervalMs = 1000 / bandwidthPps;
-      const redEnabled = Boolean(conditions.redEnabled);
-      const redMinThRaw = Math.max(0, Math.trunc(toNumber(conditions.redMinTh, 80)));
-      const redMaxThRaw = Math.max(0, Math.trunc(toNumber(conditions.redMaxTh, 150)));
-      const redMaxDropPct = Math.max(0, Math.min(100, toNumber(conditions.redMaxDropPct, 30)));
-      const baseTime = toNumber(packet.time, 0);
-      const arrivalMs = Math.max(0, Math.round(baseTime * 1000));
+        const conditions = { ...DEFAULT_LINK_CONDITIONS, ...(conn.conditions || {}) };
+        if (conditions.blocked) {
+          dropPacket("blocked", linkKey, true);
+          return;
+        }
 
-      const runtime = linkRuntimeRef.current[linkKey] || { queue: [] };
-      runtime.queue = runtime.queue.filter((departureMs) => departureMs > arrivalMs);
-      const queueDepth = runtime.queue.length;
+        const lossPct = Math.max(0, Math.min(100, toNumber(conditions.lossPct, 0)));
+        if (Math.random() * 100 < lossPct) {
+          dropPacket(`loss ${lossPct}%`, linkKey, false);
+          return;
+        }
 
-      if (redEnabled) {
-        const redMaxTh = Math.max(redMinThRaw + 1, redMaxThRaw);
-        if (queueDepth >= redMinThRaw) {
-          let redDropProb = redMaxDropPct;
-          if (queueDepth < redMaxTh) {
-            const ratio = (queueDepth - redMinThRaw) / (redMaxTh - redMinThRaw);
-            redDropProb = ratio * redMaxDropPct;
-          }
-          if (Math.random() * 100 < redDropProb) {
-            linkRuntimeRef.current[linkKey] = runtime;
-            dropPacket(`red ${redDropProb.toFixed(1)}%`, linkKey, false, false, true);
-            return;
+        const latencyMs = Math.max(0, toNumber(conditions.latencyMs, 0));
+        const jitterMs = Math.max(0, toNumber(conditions.jitterMs, 0));
+        const queueLimitPkts = Math.max(1, Math.trunc(toNumber(conditions.queueLimitPkts, 200)));
+        const bandwidthPps = Math.max(1, toNumber(conditions.bandwidthPps, 100));
+        serviceIntervalMs = 1000 / bandwidthPps;
+        const redEnabled = Boolean(conditions.redEnabled);
+        const redMinThRaw = Math.max(0, Math.trunc(toNumber(conditions.redMinTh, 80)));
+        const redMaxThRaw = Math.max(0, Math.trunc(toNumber(conditions.redMaxTh, 150)));
+        const redMaxDropPct = Math.max(0, Math.min(100, toNumber(conditions.redMaxDropPct, 30)));
+        const baseTime = toNumber(packet.time, 0);
+        const arrivalMs = Math.max(0, Math.round(baseTime * 1000));
+
+        const runtime = linkRuntimeRef.current[linkKey] || { queue: [] };
+        runtime.queue = runtime.queue.filter((departureMs) => departureMs > arrivalMs);
+        const queueDepth = runtime.queue.length;
+
+        if (redEnabled) {
+          const redMaxTh = Math.max(redMinThRaw + 1, redMaxThRaw);
+          if (queueDepth >= redMinThRaw) {
+            let redDropProb = redMaxDropPct;
+            if (queueDepth < redMaxTh) {
+              const ratio = (queueDepth - redMinThRaw) / (redMaxTh - redMinThRaw);
+              redDropProb = ratio * redMaxDropPct;
+            }
+            if (Math.random() * 100 < redDropProb) {
+              linkRuntimeRef.current[linkKey] = runtime;
+              dropPacket(`red ${redDropProb.toFixed(1)}%`, linkKey, false, false, true);
+              return;
+            }
           }
         }
-      }
 
-      if (runtime.queue.length >= queueLimitPkts) {
+        if (runtime.queue.length >= queueLimitPkts) {
+          linkRuntimeRef.current[linkKey] = runtime;
+          dropPacket(`queue-full ${queueLimitPkts}`, linkKey, false, true);
+          return;
+        }
+
+        const jitterOffset = jitterMs > 0 ? (Math.random() * 2 - 1) * jitterMs : 0;
+        effectiveLatencyMs = Math.max(0, latencyMs + jitterOffset);
+        const headDeparture = runtime.queue.length > 0 ? runtime.queue[runtime.queue.length - 1] : arrivalMs;
+        const departureMs = Math.max(arrivalMs, headDeparture) + serviceIntervalMs + effectiveLatencyMs;
+        runtime.queue.push(departureMs);
         linkRuntimeRef.current[linkKey] = runtime;
-        dropPacket(`queue-full ${queueLimitPkts}`, linkKey, false, true);
-        return;
+
+        delayedPacket = {
+          ...packet,
+          time: Number((departureMs / 1000).toFixed(4)),
+        };
       }
-
-      const jitterOffset = jitterMs > 0 ? (Math.random() * 2 - 1) * jitterMs : 0;
-      const effectiveLatencyMs = Math.max(0, latencyMs + jitterOffset);
-      const headDeparture = runtime.queue.length > 0 ? runtime.queue[runtime.queue.length - 1] : arrivalMs;
-      const departureMs = Math.max(arrivalMs, headDeparture) + serviceIntervalMs + effectiveLatencyMs;
-      runtime.queue.push(departureMs);
-      linkRuntimeRef.current[linkKey] = runtime;
-
-      const delayedPacket = {
-        ...packet,
-        time: Number((departureMs / 1000).toFixed(4)),
-      };
 
       deliveredPackets.push(delayedPacket);
       trafficIncrements.push({ srcId, dstId, isIpTraffic });
