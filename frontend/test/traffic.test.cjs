@@ -8,10 +8,14 @@ const firewallConfigModule = { exports: {} };
 vm.runInNewContext(transformSync(fs.readFileSync(`${__dirname}/../src/firewallConfig.mjs`, 'utf8'), {
   loader: 'js', format: 'cjs',
 }).code, { module: firewallConfigModule, exports: firewallConfigModule.exports });
+const deviceProfileModule = { exports: {} };
+vm.runInNewContext(transformSync(fs.readFileSync(`${__dirname}/../src/deviceProfile.mjs`, 'utf8'), {
+  loader: 'js', format: 'cjs',
+}).code, { module: deviceProfileModule, exports: deviceProfileModule.exports, require: () => firewallConfigModule.exports });
 const labFileModule = { exports: {} };
 vm.runInNewContext(transformSync(fs.readFileSync(`${__dirname}/../src/labFile.mjs`, 'utf8'), {
   loader: 'js', format: 'cjs',
-}).code, { module: labFileModule, exports: labFileModule.exports, TextEncoder, require: () => firewallConfigModule.exports });
+}).code, { module: labFileModule, exports: labFileModule.exports, TextEncoder, require: name => name === "./deviceProfile.mjs" ? deviceProfileModule.exports : firewallConfigModule.exports });
 
 // Exercise App's actual traffic callback with deterministic React state and timers.
 const code = transformSync(fs.readFileSync(`${__dirname}/../src/App.jsx`, 'utf8'), {
@@ -44,7 +48,7 @@ function trafficHarness(connections = [{ from: 'pc', to: 'switch', conditions: {
   const module = { exports: {} };
   vm.runInNewContext(code, {
     module, exports: module.exports,
-    require: name => name === 'react' ? react : name === './labFile.mjs' ? labFileModule.exports : () => null,
+    require: name => name === 'react' ? react : name === './labFile.mjs' ? labFileModule.exports : name === './deviceProfile.mjs' ? deviceProfileModule.exports : () => null,
     setTimeout: () => 1, Date, Math,
   });
   module.exports.default();

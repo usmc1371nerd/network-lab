@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { commandTokens, deviceCommandName } from "../deviceProfile.mjs";
 
 const DEFAULT_PROMPT = "lab@network:~$";
 const MAX_CAPTURE_SHOW_ROWS = 100;
@@ -431,7 +432,8 @@ export default function Terminal({
     return devices.find((device) =>
       String(device.id) === normalized ||
       String(device.name || "").toLowerCase() === normalized ||
-      String(device.ip || "").toLowerCase() === normalized
+      String(device.ip || "").toLowerCase() === normalized ||
+      (Boolean(device.ip) && String(device.ip).split("/")[0].toLowerCase() === normalized)
     ) || null;
   };
 
@@ -455,7 +457,11 @@ export default function Terminal({
     setCmdHistory((prev) => [trimmed, ...prev]);
     setHistIdx(-1);
 
-    const sshProxyMatch = trimmed.match(/^ssh\s+(\S+)\s+via\s+(\S+)$/i);
+    let tokens;
+    try { tokens = commandTokens(trimmed); }
+    catch (error) { pushLines([error.message], "error"); return; }
+    const sshProxyMatch = tokens[0]?.toLowerCase() === "ssh" && tokens.length === 4 && tokens[2].toLowerCase() === "via"
+      ? [trimmed, tokens[1], tokens[3]] : null;
     if (sshProxyMatch) {
       const target = findDeviceByToken(sshProxyMatch[1]);
       const gateway = findDeviceByToken(sshProxyMatch[2]);
@@ -490,7 +496,7 @@ export default function Terminal({
       return;
     }
 
-    const sshMatch = trimmed.match(/^ssh\s+(\S+)$/i);
+    const sshMatch = tokens[0]?.toLowerCase() === "ssh" && tokens.length === 2 ? [trimmed, tokens[1]] : null;
     if (sshMatch) {
       const targetToken = sshMatch[1];
       const target = findDeviceByToken(targetToken);
@@ -516,9 +522,10 @@ export default function Terminal({
       return;
     }
 
-    const bleMatch = trimmed.match(/^ble\s+(connect\s+\S+|status|monitor|read\s+\S+|write\s+\S+\s+.+|disconnect)$/i);
+    const bleMatch = (tokens[0]?.toLowerCase() === "ble" && tokens[1]?.toLowerCase() === "connect" && tokens.length === 3)
+      || trimmed.match(/^ble\s+(connect\s+\S+|status|monitor|read\s+\S+|write\s+\S+\s+.+|disconnect)$/i);
     if (bleMatch) {
-      const parts = trimmed.split(/\s+/);
+      const parts = tokens;
       const action = parts[1]?.toLowerCase();
 
       if (action === "connect") {
@@ -1038,23 +1045,10 @@ export default function Terminal({
     const abortController = new AbortController();
     activeCommandAbortRef.current = abortController;
     try {
-      const pingByName = trimmed.match(/^ping\s+(\S+)(.*)$/i);
-      const tracerouteByName = trimmed.match(/^traceroute\s+(\S+)(.*)$/i);
       let normalizedCommand = trimmed;
-      if (pingByName) {
-        const target = pingByName[1].toLowerCase();
-        const suffix = pingByName[2] || "";
-        const matched = devices.find((device) => device.name.toLowerCase() === target && device.ip);
-        if (matched) {
-          normalizedCommand = `ping ${matched.ip}${suffix}`;
-        }
-      } else if (tracerouteByName) {
-        const target = tracerouteByName[1].toLowerCase();
-        const suffix = tracerouteByName[2] || "";
-        const matched = devices.find((device) => device.name.toLowerCase() === target && device.ip);
-        if (matched) {
-          normalizedCommand = `traceroute ${matched.ip}${suffix}`;
-        }
+      if (["ping", "traceroute"].includes(tokens[0]?.toLowerCase()) && tokens.length >= 2) {
+        const matched = devices.find(device => device.name.toLowerCase() === tokens[1].toLowerCase() && device.ip);
+        if (matched) normalizedCommand = [tokens[0], matched.ip, ...tokens.slice(2)].map(deviceCommandName).join(" ");
       }
 
       const response = await fetch("/api/run-command", {

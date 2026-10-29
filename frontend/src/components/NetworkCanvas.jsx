@@ -6,6 +6,7 @@ import {
 } from "../securityInsights";
 
 const DEVICE_ICONS = {
+  unknown: "❔", hub: "🔌", ap: "📶",
   pc: "💻",
   server: "🖥️",
   router: "📡",
@@ -30,6 +31,7 @@ const DEVICE_ICONS = {
   "usb-printer": "🖨️",
 };
 const DEVICE_LABELS = {
+  unknown: "Unknown device", hub: "Hub", ap: "Access point",
   pc: "PC",
   server: "Server",
   router: "Router",
@@ -132,6 +134,7 @@ export default function NetworkCanvas({
   initialView,
   onViewChange,
   onOpenFirewall,
+  onEditProfile,
 }) {
   const canvasRef = useRef(null);
   const draggingRef = useRef(null);
@@ -1015,6 +1018,10 @@ export default function NetworkCanvas({
             onMouseDown={(e) => onDeviceMouseDown(e, device)}
             onClick={(e) => onDeviceClick(e, device)}
           >
+            <button className="device-profile-trigger" aria-label={`Edit profile for ${device.name}`}
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => { event.stopPropagation(); onEditProfile?.(device.id); }}
+            >Edit</button>
             {device.type === "firewall" && <button className="device-dashboard"
               onMouseDown={e => e.stopPropagation()}
               onClick={e => { e.stopPropagation(); onOpenFirewall?.(device.id); }}
@@ -1043,7 +1050,7 @@ export default function NetworkCanvas({
             </button>
             <span className="device-icon">{DEVICE_ICONS[device.type]}</span>
             <div className="device-info">
-              <div className="device-name">{device.name}</div>
+              <div className="device-name" title={device.name}>{device.name}</div>
               {NON_IP_CAPABLE_TYPES.has(device.type) ? (
                 <div className="device-ip" title="Peripheral endpoint (no IP)">
                   <span className="ip-placeholder">non-IP peripheral</span>

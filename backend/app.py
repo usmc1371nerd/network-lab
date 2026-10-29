@@ -6,6 +6,7 @@ from flask_cors import CORS
 import random
 import math
 import ipaddress
+import shlex
 from collections import deque
 from link_simulation import LinkSimulation
 from firewall import (FirewallSimulation, addresses as device_addresses,
@@ -506,7 +507,11 @@ def run_command():
     connections = data.get("connections", [])
     source_device_id = str(data.get("sourceDeviceId")) if data.get("sourceDeviceId") is not None else None
 
-    parts = command.split()
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return jsonify({"output": ["Invalid command: close the quote around the device name."],
+                        "packets": [], "deviceUpdates": [], "firewallLogs": []})
     packets = []
     output_lines = []
     pkt_counter = [0]

@@ -198,6 +198,16 @@ class PingRegressionTests(unittest.TestCase):
             [link('pc-1', 'firewall'), link('firewall', 'server')])
         self.assert_received(result, 0)
 
+    def test_ping_accepts_a_quoted_human_readable_device_name(self):
+        self.server['name'] = 'Office Server'
+        result = self.run_ping([self.pc, self.server], [link('pc-1', 'server')], command='ping "Office Server" -c 2')
+        self.assertIn('2 packets transmitted, 2 received', '\n'.join(result['output']))
+
+    def test_unclosed_command_quote_returns_a_useful_error(self):
+        result = self.run_ping([self.pc, self.server], [], command='ping "Office Server')
+        self.assertIn('close the quote', result['output'][0])
+        self.assertEqual(result['packets'], [])
+
 
 if __name__ == '__main__':
     unittest.main()

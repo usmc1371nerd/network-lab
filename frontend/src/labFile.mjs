@@ -1,4 +1,5 @@
 import { validateFirewall } from "./firewallConfig.mjs";
+import { validateInventory } from "./deviceProfile.mjs";
 
 export const LAB_FILE_VERSION = 1;
 export const MAX_LAB_FILE_BYTES = 5 * 1024 * 1024;
@@ -68,6 +69,8 @@ export function parseLab(text) {
       fail("Device IDs must be unique strings containing letters, numbers, underscores, or hyphens.");
     }
     ids.add(device.id);
+    const inventoryErrors = validateInventory(device);
+    if (inventoryErrors.length) fail(inventoryErrors.join(" "));
     if (typeof device.name !== "string" || !device.name.trim() || device.name.length > 200
         || typeof device.type !== "string" || !device.type.trim() || device.type.length > 100) {
       fail("Each device needs a name and device type.");

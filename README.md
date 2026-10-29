@@ -141,3 +141,13 @@ Firewall dashboard:
 - This is an OPNsense-inspired simulator, not OPNsense software. The implemented rule engine covers IPv4 ICMP ping. Terminal `sendpkt` and `traceroute` do not use it. NAT fields may be preserved in backups, but NAT execution and a NAT editor are not implemented.
 
 Rule behavior references: [OPNsense interface rules](https://docs.opnsense.org/manual/firewall.html) and [interface configuration](https://docs.opnsense.org/manual/interfaces.html).
+
+Device profiles and inventory:
+- Click **Edit** at the top-left of a device to change its display name, type, configured IPv4 address, and notes. Name changes keep the device's internal ID and cable references intact. Names must not conflict with another device's name, ID, or IP.
+- Names can contain spaces. Use quoted names in simulated commands, such as `ssh "Office PC"`, `ping "Office Server"`, or `ble connect "Living Room Sensor"`. The profile shows an SSH command example for IP-capable devices. These commands remain simulated; they do not authenticate to physical computers.
+- IP fields accept IPv4 addresses with an optional prefix, such as `10.10.10.10/24`. Duplicate configured addresses are rejected by the profile editor. A configured firewall's interface addresses are edited in its dashboard.
+- **Save profile** applies changes to the lab. **Cancel**, the close button, or Escape discards unapplied edits. Export is disabled while profile edits are pending; a browser refresh/exit warning also covers pending edits.
+- Changing to a non-IP peripheral clears its simulated IP, routes, and incompatible learned state. Changing a configured firewall to another type asks before removing interface/rule/NAT configuration. Existing cables remain; review their connection types after a device-type change.
+- **Discovery observations** are separate, read-only records. The model supports a source, timestamp, discovered hostname, observed IPv4/MAC addresses, suggested device type, confidence, and supporting evidence. First/last-seen timestamps are retained alongside up to 100 recent observations.
+- New observations add evidence without overwriting configured names, types, addresses, notes, or user override flags. JSON backups preserve profile and discovery metadata; older lab files without it still load.
+- This milestone does not scan the local network. Devices without observations show an empty discovery panel. The next discovery milestone is importing Nmap XML into an inventory review workflow.

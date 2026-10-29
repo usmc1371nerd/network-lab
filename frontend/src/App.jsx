@@ -4,20 +4,12 @@ import NetworkCanvas from "./components/NetworkCanvas";
 import Terminal from "./components/Terminal";
 import PacketLog from "./components/PacketLog";
 import FirewallDashboard from "./components/FirewallDashboard";
+import DeviceProfile from "./components/DeviceProfile";
+import { buildProfileUpdate, BLUETOOTH_TYPES } from "./deviceProfile.mjs";
 import { DEFAULT_VIEW, MAX_LAB_FILE_BYTES, labConfiguration, configurationSignature, serializeLab, parseLab } from "./labFile.mjs";
 
 let _id = 1;
 const uid = () => String(_id++);
-const BLUETOOTH_TYPES = new Set([
-  "phone",
-  "laptop",
-  "beacon",
-  "sensor",
-  "gateway",
-  "iot-bulb",
-  "iot-lock",
-  "iot-tag",
-]);
 const NON_IP_CAPABLE_TYPES = new Set([
   "usb-storage",
   "usb-keyboard",
@@ -78,10 +70,12 @@ export default function App() {
   const [activeFirewallId, setActiveFirewallId] = useState(null);
   const [firewallLogs, setFirewallLogs] = useState([]);
   const [firewallPending, setFirewallPending] = useState(false);
+  const [selectedProfileId, setSelectedProfileId] = useState(null);
+  const [profilePending, setProfilePending] = useState(false);
   const importInputRef = useRef(null);
   const configuration = labConfiguration(devices, connections, canvasView);
   const signature = configurationSignature(configuration);
-  const hasUnexportedChanges = signature !== exportedSignature || firewallPending;
+  const hasUnexportedChanges = signature !== exportedSignature || firewallPending || profilePending;
   const currentLabRef = useRef(null);
   currentLabRef.current = { configuration, signature, hasUnexportedChanges };
 
@@ -141,6 +135,8 @@ export default function App() {
       setFirewallLogs([]);
       setActiveFirewallId(null);
       setFirewallPending(false);
+      setSelectedProfileId(null);
+      setProfilePending(false);
       setLabSession((previous) => previous + 1);
       setExportedSignature(configurationSignature(restored));
       setFileMessage({ kind: "success", text: `Imported ${file.name}. Configuration restored; simulation and terminal sessions reset.` });
@@ -164,7 +160,7 @@ export default function App() {
       const next = prev.map((device) => {
         if (!device?.name) return device;
         if (!device.type?.startsWith("usb-")) return device;
-        if (!device.name.startsWith("USB-")) return device;
+        if (!device.name.startsWith("USB-") || device.profile?.overrides?.name) return device;
         changed = true;
         return { ...device, name: device.name.replace(/^USB-/, "") };
       });
@@ -253,6 +249,8 @@ export default function App() {
         id,
         type,
         name: `${names[type] || type}-${id}`,
+        profile: { notes: "", overrides: { name: false, type: true, ip: false } },
+        discovery: { observations: [] },
         ip: "",
         routes: [],
         ...(type === "firewall" ? { interfaces: [], rules: [], nat: [] } : {}),
@@ -268,9 +266,39 @@ export default function App() {
 
   const updateDevice = useCallback((id, fields) => {
     setDevices((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, ...fields } : d))
+      prev.map((d) => {
+        if (d.id !== id) return d;
+        const overrides = { ...d.profile?.overrides };
+        let manualChange = false;
+        for (const key of ["name", "type", "ip"]) {
+          if (fields[key] !== undefined && fields[key] !== d[key]) { overrides[key] = true; manualChange = true; }
+        }
+        return { ...d, ...fields, ...(manualChange ? { profile: { ...d.profile, ...fields.profile, overrides: { ...overrides, ...fields.profile?.overrides } } } : {}) };
+      })
     );
   }, []);
+
+  const saveDeviceProfile = (id, draft) => {
+    const original = devices.find(device => device.id === id);
+    if (!original) return { errors: ["This device no longer exists."] };
+    const result = buildProfileUpdate(original, draft, devices);
+    if (result.errors.length) return result;
+    if (BLUETOOTH_TYPES.has(result.device.type) && !result.device.btMac) result.device.btMac = makeBtMac();
+    setDevices(previous => previous.map(device => device.id === id ? result.device : device));
+    if (original.type !== result.device.type || original.ip !== result.device.ip) {
+      setPacketFlights(previous => previous.filter(flight => flight.fromId !== id && flight.toId !== id));
+      for (const key of Object.keys(linkRuntimeRef.current)) {
+        if (key.split("->").includes(String(id))) delete linkRuntimeRef.current[key];
+      }
+    }
+    if (original.type === "firewall" && result.device.type !== "firewall") {
+      setActiveFirewallId(previous => previous === id ? null : previous);
+      setFirewallLogs(previous => previous.filter(event => event.firewallId !== id));
+    }
+    setSelectedProfileId(null);
+    setProfilePending(false);
+    return result;
+  };
 
   const removeDevice = useCallback((id) => {
     setActiveFirewallId((previous) => previous === id ? null : previous);
@@ -667,6 +695,7 @@ export default function App() {
     setFirewallLogs((previous) => [...previous, ...events.map(event => ({ ...event, recordedAt: Date.now() }))].slice(-500));
   }, []);
   const activeFirewall = devices.find(device => device.id === activeFirewallId && device.type === "firewall");
+  const selectedProfile = devices.find(device => device.id === selectedProfileId);
 
   return (
     <div className="app">
@@ -678,7 +707,7 @@ export default function App() {
           <span className={`lab-save-status${hasUnexportedChanges ? " dirty" : ""}`}>
             {hasUnexportedChanges ? "Unexported changes" : "No unexported changes"}
           </span>
-          <button className="lab-file-button" onClick={exportLab} disabled={firewallPending} title={firewallPending ? "Apply or discard firewall settings before exporting" : "Download your lab as JSON"}>Export lab</button>
+          <button className="lab-file-button" onClick={exportLab} disabled={firewallPending || profilePending} title={firewallPending || profilePending ? "Save or discard pending settings before exporting" : "Download your lab as JSON"}>Export lab</button>
           <button className="lab-file-button" onClick={() => importInputRef.current?.click()} disabled={importing}>
             {importing ? "Importing…" : "Import lab"}
           </button>
@@ -688,6 +717,7 @@ export default function App() {
       <div className="lab-file-notice">
         Export your lab before closing or refreshing. Labs are not saved automatically.
         {firewallPending && <span className="lab-file-message">Apply or discard firewall settings before exporting.</span>}
+        {profilePending && <span className="lab-file-message">Save or cancel profile changes before exporting.</span>}
         {fileMessage && <span className={`lab-file-message ${fileMessage.kind}`} role={fileMessage.kind === "error" ? "alert" : "status"}>{fileMessage.text}</span>}
       </div>
 
@@ -724,6 +754,7 @@ export default function App() {
             onRemoveConnection={removeConnection}
             onUpdateConnection={updateConnection}
             onOpenFirewall={setActiveFirewallId}
+            onEditProfile={setSelectedProfileId}
           />
         </div>
       </div>
@@ -763,6 +794,11 @@ export default function App() {
           </div>
         )}
       </div>
+      {selectedProfile && <DeviceProfile key={`${labSession}-${selectedProfile.id}`}
+        device={selectedProfile} onPendingChange={setProfilePending}
+        onSave={draft => saveDeviceProfile(selectedProfile.id, draft)}
+        onClose={() => { setSelectedProfileId(null); setProfilePending(false); }}
+      />}
     </div>
   );
 }
