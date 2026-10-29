@@ -59,3 +59,9 @@
 .nmap-dialog details summary { cursor: pointer; }
 .nmap-dialog details ul { padding: 10px 20px; line-height: 1.7; }
 @media (max-width: 650px) { .inventory-workspace { padding: 16px; } .inventory-backdrop { padding: 8px; } .nmap-dialog { max-height: calc(100dvh - 16px); } .nmap-dialog header, .nmap-body, .nmap-dialog footer { padding: 16px; } }
+
+.investigation-evidence { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.investigation-evidence h3 { color: #f0f6fc; margin: 16px 0 10px; }
+.investigation-evidence details summary { color: #58a6ff; font-size: 13px; }
+.investigation-evidence table { min-width: 0; table-layout: fixed; width: 100%; }
+.investigation-evidence th:first-child { width: 25%; }

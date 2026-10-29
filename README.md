@@ -181,3 +181,10 @@ Local Linux discovery:
 - For manual local startup: `NETWORK_LAB_DISCOVERY=1 .venv/bin/python backend/app.py`. Use one local backend process. Docker/Render, Windows, and macOS users can continue using XML import for this milestone. Discovery jobs and results are memory-only; review/import results and export JSON to retain them.
 
 Discovery behavior reference: [Nmap host discovery documentation](https://nmap.org/book/man-host-discovery.html).
+
+Guided investigation:
+- Open **Inventory → Investigate** on a saved device. See the observed address, scan date/source, and expandable plain-language explanations of reported ports and services. A service label from a port-name lookup does not confirm installed software; an open port alone does not establish a vulnerability. Port-state explanations follow the [Nmap reference](https://nmap.org/book/man-port-scanning-basics.html).
+- **Check this address** runs the existing local host-discovery workflow against that observed IPv4 address only (`/32`). It uses a directly connected private LAN and the same localhost/session/route restrictions as discovery. The target is locked; a configured practice-lab IP override is never used. Nothing probes the network just by opening Investigate.
+- Saved explanations work on hosted deployments too. Real checks require the local Linux setup described above. If the observed address is off-LAN or no longer valid, connect to the appropriate LAN and refresh network settings, or import a newer XML scan.
+- Results explain both responses and silence. No response does not prove a device is offline; a response does not confirm identity or application health. A changed reported MAC prompts identity review, and neighbor-cache MACs may be stale. A host-only check does not rescan saved service ports.
+- Choose **Review discovered hosts** to explicitly import new evidence. Checks never automatically overwrite inventory profiles or observations. Another active scan remains separate and cannot be cancelled by closing an unrelated investigation. Export your lab after importing evidence to keep it.

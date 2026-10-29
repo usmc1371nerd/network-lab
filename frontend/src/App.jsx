@@ -81,6 +81,7 @@ export default function App() {
   const [nmapImportOpen, setNmapImportOpen] = useState(false);
   const [selectedProfileScope, setSelectedProfileScope] = useState("lab");
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const [investigationId, setInvestigationId] = useState(null);
   const [discoveryPending, setDiscoveryPending] = useState(false);
   const [localDiscoveryResult, setLocalDiscoveryResult] = useState(null);
   const importInputRef = useRef(null);
@@ -752,7 +753,7 @@ export default function App() {
             {importing ? "Importing…" : "Import lab"}
           </button>
           <button className="lab-file-button" disabled={importing || firewallPending || profilePending} onClick={() => setNmapImportOpen(true)}>Import Nmap scan</button>
-          <button className="lab-file-button" disabled={importing || firewallPending || profilePending} onClick={() => setDiscoveryOpen(true)}>Discover local network</button>
+          <button className="lab-file-button" disabled={importing || firewallPending || profilePending} onClick={() => { setInvestigationId(null); setDiscoveryOpen(true); }}>Discover local network</button>
           <input ref={importInputRef} type="file" accept=".json,application/json" aria-label="Import lab JSON file" hidden onChange={importLab} />
         </div>
       </header>
@@ -765,7 +766,8 @@ export default function App() {
       </div>
 
       <div className="app-body">
-        {workspace === "inventory" && <InventoryWorkspace assets={inventory} onImport={() => setNmapImportOpen(true)} onDiscover={() => setDiscoveryOpen(true)}
+        {workspace === "inventory" && <InventoryWorkspace assets={inventory} onImport={() => setNmapImportOpen(true)} onDiscover={() => { setInvestigationId(null); setDiscoveryOpen(true); }}
+          onInvestigate={id => { setInvestigationId(id); setDiscoveryOpen(true); }}
           onEdit={id => { setSelectedProfileScope("inventory"); setSelectedProfileId(id); }}
           onCopy={copyToPractice} onBack={() => setWorkspace("lab")} />}
         {activeFirewall && <FirewallDashboard
@@ -846,7 +848,7 @@ export default function App() {
         onClose={() => { setSelectedProfileId(null); setProfilePending(false); }}
       />}
       {nmapImportOpen && <NmapImport inventory={inventory} localResult={localDiscoveryResult} onApply={applyScan} onClose={() => { setNmapImportOpen(false); setLocalDiscoveryResult(null); }} />}
-      {discoveryOpen && <LocalDiscovery onPendingChange={setDiscoveryPending}
+      {discoveryOpen && <LocalDiscovery asset={inventory.find(asset => asset.id === investigationId)} onPendingChange={setDiscoveryPending}
         onClose={() => setDiscoveryOpen(false)}
         onImportXml={() => { setDiscoveryOpen(false); setLocalDiscoveryResult(null); setNmapImportOpen(true); }}
         onReview={result => { setLocalDiscoveryResult(result); setDiscoveryOpen(false); setNmapImportOpen(true); }}

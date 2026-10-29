@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node test/traffic.test.cjs && node test/labFile.test.mjs && node test/firewallConfig.test.mjs && node test/deviceProfile.test.mjs && node test/nmapImport.test.mjs",
+    "test": "node test/traffic.test.cjs && node test/labFile.test.mjs && node test/firewallConfig.test.mjs && node test/deviceProfile.test.mjs && node test/nmapImport.test.mjs && node test/investigation.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
