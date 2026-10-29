@@ -1,0 +1,51 @@
+.workspace-tabs { display: flex; gap: 4px; margin-left: 12px; }
+.workspace-tabs button { padding: 6px 10px; color: #8b949e; border: 1px solid #30363d; border-radius: 5px; font-size: 12px; }
+.workspace-tabs button.active { color: #79c0ff; background: #58a6ff16; border-color: #58a6ff77; }
+.inventory-workspace { flex: 1; min-width: 0; overflow: auto; padding: 28px; color: #c9d1d9; background: #0d1117; font-size: 13px; }
+.inventory-page-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 22px; }
+.inventory-eyebrow { font-size: 10px; letter-spacing: 1px; color: #79c0ff; }
+.inventory-page-heading h2, .nmap-dialog h2 { margin: 6px 0; color: #f0f6fc; font-size: 23px; font-weight: 600; }
+.inventory-page-heading p, .nmap-dialog header p { color: #8b949e; font-size: 12px; }
+.inventory-actions { display: flex; gap: 8px; }
+.inventory-workspace button, .nmap-dialog button, .inventory-file { background: #21262d; color: #f0f6fc; border: 1px solid #484f58; padding: 8px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; }
+.inventory-workspace button:disabled, .nmap-dialog button:disabled { opacity: .5; cursor: not-allowed; }
+.inventory-workspace button.inventory-primary, .nmap-dialog button.inventory-primary { background: #238636; border-color: #2ea043; }
+.inventory-callout { border: 1px solid #58a6ff44; background: #58a6ff0c; color: #a5b8ce; border-radius: 6px; padding: 14px 16px; line-height: 1.6; margin-bottom: 20px; font-size: 12px; }
+.inventory-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 14px; margin: 16px 0 22px; }
+.inventory-toolbar label { display: flex; flex-direction: column; gap: 7px; font-size: 11px; }
+.inventory-toolbar input:not([type=file]) { min-width: 250px; }
+.inventory-toolbar span { color: #8b949e; margin: auto 0; font-size: 11px; }
+.inventory-file { display: inline-flex !important; flex-direction: row !important; align-items: center; flex-wrap: wrap; }
+.inventory-file input { max-width: 250px; font-size: 11px; }
+.inventory-workspace input:not([type=checkbox]), .nmap-dialog select { background: #0d1117; border: 1px solid #484f58; border-radius: 5px; padding: 8px 10px; color: #f0f6fc; font: inherit; font-size: 12px; }
+.inventory-workspace input[type=checkbox], .nmap-dialog input[type=checkbox] { accent-color: #58a6ff; width: 16px; height: 16px; }
+.inventory-workspace button:focus-visible, .inventory-workspace input:focus-visible, .nmap-dialog button:focus-visible, .nmap-dialog input:focus-visible, .nmap-dialog select:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+.inventory-table-scroll { overflow: auto; border: 1px solid #30363d; border-radius: 6px; }
+.inventory-table-scroll table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+.inventory-table-scroll th { padding: 12px; color: #8b949e; background: #161b22; font-weight: 500; white-space: nowrap; }
+.inventory-table-scroll td { padding: 14px 12px; border-top: 1px solid #30363d; vertical-align: top; overflow-wrap: anywhere; }
+.inventory-table-scroll strong { color: #f0f6fc; display: block; font-size: 12px; }
+.inventory-table-scroll small { display: block; color: #8b949e; margin-top: 5px; font-size: 10px; line-height: 1.5; }
+.inventory-table-scroll select { width: 100%; min-width: 210px; }
+.inventory-review { color: #fbbf24 !important; }
+.inventory-port { display: inline-block; padding: 4px 6px; margin: 0 4px 4px 0; background: #21262d; border-radius: 4px; font-size: 10px; white-space: nowrap; }
+.inventory-help { color: #8b949e; font-size: 11px; margin: 16px 0; line-height: 1.7; }
+.inventory-error { border: 1px solid #f85149; background: #f8514910; color: #ff9b95; padding: 12px; border-radius: 5px; margin: 14px 0; line-height: 1.6; }
+.inventory-empty { padding: 55px 20px; border: 1px dashed #484f58; text-align: center; border-radius: 8px; }
+.inventory-empty > span { font-size: 40px; color: #58a6ff; }
+.inventory-empty h3 { margin: 15px 0 8px; color: #f0f6fc; }
+.inventory-empty p { color: #8b949e; max-width: 500px; margin: 0 auto 20px; line-height: 1.7; }
+.inventory-backdrop { position: fixed; inset: 0; z-index: 1000; background: #000b; display: grid; place-items: center; padding: 20px; }
+.nmap-dialog { width: min(1150px, 100%); max-height: calc(100dvh - 40px); background: #161b22; border: 1px solid #484f58; border-radius: 12px; display: flex; flex-direction: column; color: #c9d1d9; font-size: 13px; }
+.nmap-dialog header { display: flex; justify-content: space-between; align-items: start; padding: 22px 24px; border-bottom: 1px solid #30363d; }
+.nmap-dialog header > button { font-size: 20px; padding: 0 6px; background: transparent; border: 0; }
+.nmap-body { overflow: auto; padding: 22px 24px; }
+.nmap-dialog footer { padding: 16px 24px; border-top: 1px solid #30363d; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.nmap-dialog footer span { color: #8b949e; font-size: 11px; margin-right: auto; }
+.inventory-summary { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 14px; background: #0d1117; border-radius: 6px; }
+.inventory-summary strong { color: #f0f6fc; }
+.inventory-summary span { color: #8b949e; font-size: 11px; }
+.nmap-dialog details { padding: 12px 0; color: #8b949e; font-size: 11px; }
+.nmap-dialog details summary { cursor: pointer; }
+.nmap-dialog details ul { padding: 10px 20px; line-height: 1.7; }
+@media (max-width: 650px) { .inventory-workspace { padding: 16px; } .inventory-backdrop { padding: 8px; } .nmap-dialog { max-height: calc(100dvh - 16px); } .nmap-dialog header, .nmap-body, .nmap-dialog footer { padding: 16px; } }

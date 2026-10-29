@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<!-- Example data only: no network was scanned to create this file. -->
+<nmaprun scanner="nmap" version="7.95" start="1793188800">
+  <host endtime="1793188810"><status state="up" reason="arp-response"/><address addr="10.0.0.1" addrtype="ipv4"/><address addr="02:00:00:00:00:01" addrtype="mac" vendor="Example Network Equipment"/><hostnames><hostname name="home-router.local" type="PTR"/></hostnames><ports><port protocol="tcp" portid="443"><state state="open"/><service name="https" method="probed" product="Example management interface"/></port></ports><os><osmatch name="Example router OS" accuracy="95"><osclass type="router" accuracy="95"/></osmatch></os></host>
+  <host endtime="1793188811"><status state="up" reason="arp-response"/><address addr="10.0.0.20" addrtype="ipv4"/><address addr="02:00:00:00:00:20" addrtype="mac" vendor="Example Computers"/><hostnames><hostname name="office-computer.local" type="PTR"/></hostnames><ports><port protocol="tcp" portid="22"><state state="open"/><service name="ssh" method="probed" product="OpenSSH"/></port><port protocol="tcp" portid="445"><state state="closed"/><service name="microsoft-ds" method="table"/></port></ports><os><osmatch name="Example general-purpose OS" accuracy="90"><osclass type="general purpose" accuracy="90"/></osmatch></os></host>
+  <host endtime="1793188812"><status state="up" reason="arp-response"/><address addr="10.0.0.50" addrtype="ipv4"/><address addr="02:00:00:00:00:50" addrtype="mac" vendor="Example Printers"/><hostnames><hostname name="office-printer.local" type="PTR"/></hostnames><ports><port protocol="tcp" portid="631"><state state="open"/><service name="ipp" method="probed" product="Example printer"/></port></ports><os><osmatch name="Example printer firmware" accuracy="85"><osclass type="printer" accuracy="85"/></osmatch></os></host>
+  <host><status state="down"/><address addr="10.0.0.99" addrtype="ipv4"/></host>
+  <runstats><finished time="1793188815" exit="success"/><hosts up="3" down="1" total="4"/></runstats>
+</nmaprun>

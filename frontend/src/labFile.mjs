@@ -1,7 +1,7 @@
 import { validateFirewall } from "./firewallConfig.mjs";
 import { validateInventory } from "./deviceProfile.mjs";
 
-export const LAB_FILE_VERSION = 1;
+export const LAB_FILE_VERSION = 2;
 export const MAX_LAB_FILE_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_VIEW = { scale: 1, pan: { x: 0, y: 0 }, expandedDevices: {} };
 
@@ -17,10 +17,10 @@ function deviceConfig(device) {
   return configuration;
 }
 
-export function labConfiguration(devices, connections, view = DEFAULT_VIEW) {
+export function labConfiguration(devices, connections, view = DEFAULT_VIEW, inventory = []) {
   const ids = new Set(devices.map((device) => device.id));
   return {
-    devices: devices.map(deviceConfig), connections,
+    devices: devices.map(deviceConfig), connections, inventory: inventory.map(deviceConfig),
     view: { ...view, expandedDevices: Object.fromEntries(
       Object.entries(view.expandedDevices).filter(([id, expanded]) => ids.has(id) && expanded)
     ) },
@@ -35,8 +35,8 @@ export function configurationSignature(configuration) {
   return JSON.stringify(canonical(configuration));
 }
 
-export function serializeLab(devices, connections, view) {
-  const configuration = labConfiguration(devices, connections, view);
+export function serializeLab(devices, connections, view, inventory = []) {
+  const configuration = labConfiguration(devices, connections, view, inventory);
   const text = JSON.stringify({
     format: "network-lab", version: LAB_FILE_VERSION,
     exportedAt: new Date().toISOString(), ...configuration,
@@ -58,7 +58,7 @@ export function parseLab(text) {
     fail("This file is not valid lab JSON. Choose an exported Network Lab file.");
   }
   if (!object(data) || data.format !== "network-lab") fail("This is not a Network Lab backup.");
-  if (data.version !== LAB_FILE_VERSION) fail(`Unsupported lab version: ${data.version}. This app supports version ${LAB_FILE_VERSION}.`);
+  if (![1, LAB_FILE_VERSION].includes(data.version)) fail(`Unsupported lab version: ${data.version}. This app supports versions 1 and ${LAB_FILE_VERSION}.`);
   if (!Array.isArray(data.devices) || data.devices.length > 1000) fail("A lab must contain a devices array with at most 1,000 devices.");
   if (!Array.isArray(data.connections) || data.connections.length > 10000) fail("A lab must contain a connections array with at most 10,000 links.");
 
@@ -120,5 +120,14 @@ export function parseLab(text) {
       || !object(view.expandedDevices) || Object.entries(view.expandedDevices).some(([id, value]) => !ids.has(id) || typeof value !== "boolean")) {
     fail("Invalid canvas view settings.");
   }
-  return labConfiguration(data.devices, data.connections, view);
+  let inventory = data.inventory ?? [];
+  if (!Array.isArray(inventory) || inventory.length > 1000) fail("Inventory must be an array with at most 1,000 assets.");
+  if (inventory.length) {
+    inventory = parseLab(JSON.stringify({ format: "network-lab", version: LAB_FILE_VERSION, devices: inventory, connections: [], view: DEFAULT_VIEW })).devices;
+    for (const asset of inventory) {
+      if (ids.has(asset.id)) fail("Lab and inventory IDs must be distinct.");
+      if (!asset.discovery?.observations?.length) fail("Inventory assets need at least one discovery observation.");
+    }
+  }
+  return labConfiguration(data.devices, data.connections, view, inventory);
 }

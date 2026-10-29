@@ -6,7 +6,7 @@ import {
 } from "../securityInsights";
 
 const DEVICE_ICONS = {
-  unknown: "❔", hub: "🔌", ap: "📶",
+  unknown: "❔", hub: "🔌", ap: "📶", printer: "🖨️",
   pc: "💻",
   server: "🖥️",
   router: "📡",
@@ -31,7 +31,7 @@ const DEVICE_ICONS = {
   "usb-printer": "🖨️",
 };
 const DEVICE_LABELS = {
-  unknown: "Unknown device", hub: "Hub", ap: "Access point",
+  unknown: "Unknown device", hub: "Hub", ap: "Access point", printer: "Network printer",
   pc: "PC",
   server: "Server",
   router: "Router",

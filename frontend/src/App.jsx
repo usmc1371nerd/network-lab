@@ -5,6 +5,9 @@ import Terminal from "./components/Terminal";
 import PacketLog from "./components/PacketLog";
 import FirewallDashboard from "./components/FirewallDashboard";
 import DeviceProfile from "./components/DeviceProfile";
+import NmapImport from "./components/NmapImport";
+import InventoryWorkspace from "./components/InventoryWorkspace";
+import { applyNmapReview, practiceCopies } from "./nmapImport.mjs";
 import { buildProfileUpdate, BLUETOOTH_TYPES } from "./deviceProfile.mjs";
 import { DEFAULT_VIEW, MAX_LAB_FILE_BYTES, labConfiguration, configurationSignature, serializeLab, parseLab } from "./labFile.mjs";
 
@@ -72,8 +75,12 @@ export default function App() {
   const [firewallPending, setFirewallPending] = useState(false);
   const [selectedProfileId, setSelectedProfileId] = useState(null);
   const [profilePending, setProfilePending] = useState(false);
+  const [inventory, setInventory] = useState([]);
+  const [workspace, setWorkspace] = useState("lab");
+  const [nmapImportOpen, setNmapImportOpen] = useState(false);
+  const [selectedProfileScope, setSelectedProfileScope] = useState("lab");
   const importInputRef = useRef(null);
-  const configuration = labConfiguration(devices, connections, canvasView);
+  const configuration = labConfiguration(devices, connections, canvasView, inventory);
   const signature = configurationSignature(configuration);
   const hasUnexportedChanges = signature !== exportedSignature || firewallPending || profilePending;
   const currentLabRef = useRef(null);
@@ -91,7 +98,7 @@ export default function App() {
 
   const exportLab = () => {
     try {
-      const text = serializeLab(devices, connections, canvasView);
+      const text = serializeLab(devices, connections, canvasView, inventory);
       const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -116,14 +123,17 @@ export default function App() {
       if (file.size > MAX_LAB_FILE_BYTES) throw new Error("Lab files must be 5 MB or smaller.");
       const restored = parseLab(await file.text());
       const current = currentLabRef.current;
-      if ((current.configuration.devices.length || current.configuration.connections.length || current.hasUnexportedChanges)
-          && !window.confirm("Replace the current lab with this backup? Export your current lab first if you want to keep it. Running traffic and terminal sessions will be cleared.")) {
+      if ((current.configuration.devices.length || current.configuration.connections.length || current.configuration.inventory.length || current.hasUnexportedChanges)
+          && !window.confirm("Replace the current lab and inventory with this backup? Export first if you want to keep them. Running traffic and terminal sessions will be cleared.")) {
         return;
       }
       flightTimeoutsRef.current.forEach(clearTimeout);
       flightTimeoutsRef.current = [];
       linkRuntimeRef.current = {};
       setDevices(restored.devices);
+      setInventory(restored.inventory);
+      setWorkspace(restored.devices.length ? "lab" : restored.inventory.length ? "inventory" : "lab");
+      setNmapImportOpen(false);
       setConnections(restored.connections);
       setCanvasView(restored.view);
       setCapturedPackets([]);
@@ -279,10 +289,16 @@ export default function App() {
   }, []);
 
   const saveDeviceProfile = (id, draft) => {
-    const original = devices.find(device => device.id === id);
+    const collection = selectedProfileScope === "inventory" ? inventory : devices;
+    const original = collection.find(device => device.id === id);
     if (!original) return { errors: ["This device no longer exists."] };
-    const result = buildProfileUpdate(original, draft, devices);
+    const result = buildProfileUpdate(original, draft, collection);
     if (result.errors.length) return result;
+    if (selectedProfileScope === "inventory") {
+      setInventory(previous => previous.map(asset => asset.id === id ? result.device : asset));
+      setSelectedProfileId(null); setProfilePending(false);
+      return result;
+    }
     if (BLUETOOTH_TYPES.has(result.device.type) && !result.device.btMac) result.device.btMac = makeBtMac();
     setDevices(previous => previous.map(device => device.id === id ? result.device : device));
     if (original.type !== result.device.type || original.ip !== result.device.ip) {
@@ -694,8 +710,26 @@ export default function App() {
     if (!Array.isArray(events) || !events.length) return;
     setFirewallLogs((previous) => [...previous, ...events.map(event => ({ ...event, recordedAt: Date.now() }))].slice(-500));
   }, []);
-  const activeFirewall = devices.find(device => device.id === activeFirewallId && device.type === "firewall");
-  const selectedProfile = devices.find(device => device.id === selectedProfileId);
+  const activeFirewall = workspace === "lab" && devices.find(device => device.id === activeFirewallId && device.type === "firewall");
+  const selectedProfile = (selectedProfileScope === "inventory" ? inventory : devices).find(device => device.id === selectedProfileId);
+  const applyScan = (candidates, selections) => {
+    try {
+      const result = applyNmapReview(inventory, candidates, selections);
+      serializeLab(devices, connections, canvasView, result.inventory);
+      setInventory(result.inventory); setWorkspace("inventory"); setActiveFirewallId(null); setNmapImportOpen(false);
+      setFileMessage({ kind: "success", text: `Scan imported: ${result.added} new assets, ${result.updated} matched assets reviewed. No lab devices or cables changed. Export to keep your inventory.` });
+      return {};
+    } catch (error) { return { error: error.message }; }
+  };
+  const copyToPractice = (assets) => {
+    try {
+      const copies = practiceCopies(assets, devices).map(device => BLUETOOTH_TYPES.has(device.type) ? { ...device, btMac: makeBtMac() } : device);
+      serializeLab([...devices, ...copies], connections, canvasView, inventory);
+      setDevices(previous => [...previous, ...copies]); setWorkspace("lab"); setActiveFirewallId(null);
+      setFileMessage({ kind: "success", text: `${copies.length} practice copies added. Review IP prefixes (/24 is the lab default), connect cables, and configure routes. No real devices were changed.` });
+      return {};
+    } catch (error) { return { error: error.message }; }
+  };
 
   return (
     <div className="app">
@@ -703,6 +737,7 @@ export default function App() {
         <span className="app-logo">⬡</span>
         <h1 className="app-title">Network Lab</h1>
         <span className="app-subtitle">Interactive Network Simulator</span>
+        <nav className="workspace-tabs" aria-label="Workspace"><button className={workspace === "lab" ? "active" : ""} onClick={() => setWorkspace("lab")} disabled={firewallPending || profilePending}>Lab</button><button className={workspace === "inventory" ? "active" : ""} onClick={() => { setWorkspace("inventory"); setActiveFirewallId(null); }} disabled={firewallPending || profilePending}>Inventory ({inventory.length})</button></nav>
         <div className="lab-file-actions">
           <span className={`lab-save-status${hasUnexportedChanges ? " dirty" : ""}`}>
             {hasUnexportedChanges ? "Unexported changes" : "No unexported changes"}
@@ -711,17 +746,21 @@ export default function App() {
           <button className="lab-file-button" onClick={() => importInputRef.current?.click()} disabled={importing}>
             {importing ? "Importing…" : "Import lab"}
           </button>
+          <button className="lab-file-button" disabled={importing || firewallPending || profilePending} onClick={() => setNmapImportOpen(true)}>Import Nmap scan</button>
           <input ref={importInputRef} type="file" accept=".json,application/json" aria-label="Import lab JSON file" hidden onChange={importLab} />
         </div>
       </header>
       <div className="lab-file-notice">
-        Export your lab before closing or refreshing. Labs are not saved automatically.
+        Export your lab and inventory before closing or refreshing. They are not saved automatically.
         {firewallPending && <span className="lab-file-message">Apply or discard firewall settings before exporting.</span>}
         {profilePending && <span className="lab-file-message">Save or cancel profile changes before exporting.</span>}
         {fileMessage && <span className={`lab-file-message ${fileMessage.kind}`} role={fileMessage.kind === "error" ? "alert" : "status"}>{fileMessage.text}</span>}
       </div>
 
       <div className="app-body">
+        {workspace === "inventory" && <InventoryWorkspace assets={inventory} onImport={() => setNmapImportOpen(true)}
+          onEdit={id => { setSelectedProfileScope("inventory"); setSelectedProfileId(id); }}
+          onCopy={copyToPractice} onBack={() => setWorkspace("lab")} />}
         {activeFirewall && <FirewallDashboard
           key={`${labSession}-${activeFirewall.id}`}
           device={activeFirewall} devices={devices} connections={connections}
@@ -735,7 +774,7 @@ export default function App() {
             (result.deviceUpdates || []).forEach(update => updateDevice(update.id, update));
           }}
         />}
-        <div className="panel panel-canvas" style={activeFirewall ? { display: "none" } : undefined}>
+        <div className="panel panel-canvas" style={activeFirewall || workspace !== "lab" ? { display: "none" } : undefined}>
           <div className="panel-label">TOPOLOGY</div>
           <NetworkCanvas
             key={labSession}
@@ -754,13 +793,13 @@ export default function App() {
             onRemoveConnection={removeConnection}
             onUpdateConnection={updateConnection}
             onOpenFirewall={setActiveFirewallId}
-            onEditProfile={setSelectedProfileId}
+            onEditProfile={id => { setSelectedProfileScope("lab"); setSelectedProfileId(id); }}
           />
         </div>
       </div>
 
       {/* Bottom panel toolbar */}
-      <div className={`panel-bottom ${rightPanelOpen ? "expanded" : "collapsed"}`}>
+      <div className={`panel-bottom ${rightPanelOpen ? "expanded" : "collapsed"}`} style={workspace !== "lab" ? { display: "none" } : undefined}>
         <button
           className="panel-bottom-toggle"
           onClick={() => setRightPanelOpen((prev) => !prev)}
@@ -795,10 +834,11 @@ export default function App() {
         )}
       </div>
       {selectedProfile && <DeviceProfile key={`${labSession}-${selectedProfile.id}`}
-        device={selectedProfile} onPendingChange={setProfilePending}
+        device={selectedProfile} context={selectedProfileScope} onPendingChange={setProfilePending}
         onSave={draft => saveDeviceProfile(selectedProfile.id, draft)}
         onClose={() => { setSelectedProfileId(null); setProfilePending(false); }}
       />}
+      {nmapImportOpen && <NmapImport inventory={inventory} onApply={applyScan} onClose={() => setNmapImportOpen(false)} />}
     </div>
   );
 }

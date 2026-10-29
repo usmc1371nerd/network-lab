@@ -124,7 +124,7 @@ Lab backups (no database or account required):
 - Backups include device names, positions, IP/MAC settings, routes, connections and link conditions, canvas zoom/pan, and expanded device panels. Additional device configuration fields (such as future firewall interfaces, rules, and NAT configuration) are preserved.
 - Import starts a fresh simulation: learned ARP/MAC tables, packet captures, counters, animations, queues, and terminal sessions reset.
 - **Unexported changes** indicates that configuration has changed since the last export/import. Refreshing or leaving prompts a browser warning when there are unexported changes; browsers may suppress that warning, so export before leaving.
-- Invalid or unsupported backups leave the current lab untouched. Version 1 supports files up to 5 MB, 1,000 devices, and 10,000 connections.
+- Invalid or unsupported backups leave the current lab untouched. Version 2 exports include both lab and inventory and support files up to 5 MB, 1,000 lab devices, 1,000 inventory assets, and 10,000 lab connections. Version 1 backups still import. Older app versions reject version 2 files rather than silently discarding inventory.
 - Backup files stay in your browser/downloads and are not uploaded to the server. This feature does not require database hosting or persistent Render storage.
 
 Firewall dashboard:
@@ -150,4 +150,19 @@ Device profiles and inventory:
 - Changing to a non-IP peripheral clears its simulated IP, routes, and incompatible learned state. Changing a configured firewall to another type asks before removing interface/rule/NAT configuration. Existing cables remain; review their connection types after a device-type change.
 - **Discovery observations** are separate, read-only records. The model supports a source, timestamp, discovered hostname, observed IPv4/MAC addresses, suggested device type, confidence, and supporting evidence. First/last-seen timestamps are retained alongside up to 100 recent observations.
 - New observations add evidence without overwriting configured names, types, addresses, notes, or user override flags. JSON backups preserve profile and discovery metadata; older lab files without it still load.
-- This milestone does not scan the local network. Devices without observations show an empty discovery panel. The next discovery milestone is importing Nmap XML into an inventory review workflow.
+- This app does not scan the local network. Import existing Nmap XML through the Inventory workspace; lab devices without observations show an empty discovery panel.
+
+Nmap XML import and discovered inventory:
+- Click **Import Nmap scan** in the header, or open **Inventory** and choose **Import Nmap XML**. Choose a standard XML file exported by Nmap (`-oX`), or click **Try a sample file** for clearly labeled example data. No Nmap installation is needed to try the sample.
+- XML parsing happens entirely in the browser. The app does not upload the XML, run Nmap, probe devices, authenticate to hosts, or change their configuration. Custom XML entities and external DTDs are rejected; the usual plain `<!DOCTYPE nmaprun>` declaration is accepted.
+- Review individual IPv4 hosts reported as up before importing. Down/unknown-status hosts, IPv6-only hosts, and duplicate address records are counted as skipped. The first 128 individually listed port records per host are retained, with truncation noted. Raw script output is not imported.
+- The review screen shows observed IP, hostname, MAC/vendor, and explicit Nmap device-class suggestions. New inventory assets begin as **Unknown device**; a general-purpose OS or an open SSH port is not enough to classify a host as a PC or server. Confirm roles through **Edit profile**.
+- Matching by MAC suggests an existing asset but still requires review. IP-only matches, changed MACs at a previously seen IP, and shared MAC identities are unchecked by default. Choose the intended existing asset or create a separate one, then explicitly include the row. An IP address is not treated as a permanent device identity.
+- Applying a scan adds observations without replacing curated names, types, notes, or lab IP overrides. Reimporting the same observations does not grow history with duplicates. Assets absent from a new scan remain in inventory; absence does not establish that a device is offline.
+- Inventory is separate from the simulated Lab. It shows last-seen scan evidence, not current reachability or physical topology. No switch, cable, gateway, or subnet is invented from host discovery alone.
+- Select inventory assets and choose **Add selected to practice lab** to create independent simulated copies. Their IDs differ from inventory IDs; their observed evidence is retained, but no cables or routes are added. Configure connections and routes yourself. Copies use an observed IP with the simulator's explicit `/24` default unless you set a different lab IPv4 override in the inventory profile. The scan did not establish that prefix.
+- Duplicate practice IPs are rejected without changing the lab. Edit the inventory asset's optional lab IPv4 override to choose a different practice address; the observed address remains read only.
+- **Export lab** now backs up both workspaces. **Import lab** restores both after replacement confirmation. Inventory-only backups reopen Inventory; existing version 1 lab files restore with an empty inventory.
+- Limits: XML files up to 5 MB and 1,000 host records per file; inventory up to 1,000 assets. Backup size remains capped at 5 MB, so very large selections/history may need to be split into smaller workspaces.
+
+Nmap format reference: [official XML output documentation](https://nmap.org/book/output-formats-xml-output.html).

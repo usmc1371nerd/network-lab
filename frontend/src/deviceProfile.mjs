@@ -1,7 +1,7 @@
 import { ipv4Network } from "./firewallConfig.mjs";
 
 export const DEVICE_TYPES = {
-  unknown: "Unknown device", pc: "PC", server: "Server", router: "Router", firewall: "Firewall",
+  unknown: "Unknown device", pc: "PC", server: "Server", printer: "Network printer", router: "Router", firewall: "Firewall",
   switch: "Switch", hub: "Hub", ap: "Access point", laptop: "Laptop", phone: "Phone", gateway: "Bluetooth gateway",
   beacon: "BLE beacon", sensor: "BLE sensor", "iot-bulb": "IoT bulb", "iot-lock": "IoT lock",
   "iot-tag": "IoT tag", "iot-camera": "IoT camera", "iot-thermostat": "IoT thermostat", "iot-plug": "IoT plug",
@@ -21,12 +21,16 @@ export function profileDraft(device) {
 export function validateObservation(observation) {
   if (!object(observation) || !text(observation.source, 80) || !observation.source.trim()
       || !text(observation.observedAt, 40) || !/^\d{4}-\d\d-\d\dT/.test(observation.observedAt) || !Number.isFinite(Date.parse(observation.observedAt))) return ["Discovery observations need a source and an ISO timestamp."];
-  for (const key of ["hostname", "ip", "mac", "suggestedType"]) {
+  for (const key of ["hostname", "ip", "mac", "suggestedType", "vendor", "os", "sourceFile", "timestampSource"]) {
     if (observation[key] !== undefined && !text(observation[key], 200)) return [`Invalid discovery ${key}.`];
   }
   if (observation.ip && !ipv4Network(observation.ip)) return ["Observed IP must be an IPv4 address."];
   if (observation.confidence !== undefined && (typeof observation.confidence !== "number" || !Number.isFinite(observation.confidence) || observation.confidence < 0 || observation.confidence > 1)) return ["Discovery confidence must be between 0 and 1."];
   if (observation.evidence !== undefined && (!Array.isArray(observation.evidence) || observation.evidence.length > 20 || observation.evidence.some(item => !text(item, 500)))) return ["Discovery evidence must be a list of short descriptions."];
+  if (observation.services !== undefined && (!Array.isArray(observation.services) || observation.services.length > 128 || observation.services.some(service =>
+    !object(service) || !Number.isInteger(service.port) || service.port < 0 || service.port > 65535
+    || !["tcp", "udp", "sctp", "ip"].includes(service.protocol) || !text(service.state, 40)
+    || ["name", "product", "version", "method"].some(key => service[key] !== undefined && !text(service[key], 200))))) return ["Invalid discovery service records."];
   return [];
 }
 

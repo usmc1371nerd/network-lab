@@ -15,7 +15,7 @@ test('versioned backup round trips topology, routes, future firewall configurati
   const text = serializeLab(devices, connections, view);
   const file = JSON.parse(text);
   assert.equal(file.format, 'network-lab');
-  assert.equal(file.version, 1);
+  assert.equal(file.version, 2);
   assert.ok(file.exportedAt);
   const restored = parseLab(text);
   assert.deepEqual(restored, labConfiguration(devices, connections, view));
@@ -33,7 +33,7 @@ test('empty labs can be backed up and missing optional view uses defaults', () =
 });
 
 test('malformed JSON, unrelated files, and unsupported versions are rejected', () => {
-  for (const text of ['{', 'null', '[]', '{}', JSON.stringify({ ...backup(), version: 2 })]) {
+  for (const text of ['{', 'null', '[]', '{}', JSON.stringify({ ...backup(), version: 3 })]) {
     assert.throws(() => parseLab(text));
   }
 });
@@ -86,7 +86,7 @@ test('dirty comparison ignores learned state, JSON key order, and removed expans
   const config = labConfiguration(devices, connections, view);
   const changedRuntime = devices.map(d => ({ ...d, arp_table: { learned: 'new' }, mac_table: { new: 'port' } }));
   assert.equal(configurationSignature(config), configurationSignature(labConfiguration(changedRuntime, connections, view)));
-  assert.equal(configurationSignature(config), configurationSignature({ view: config.view, connections: config.connections, devices: config.devices }));
+  assert.equal(configurationSignature(config), configurationSignature({ inventory: config.inventory, view: config.view, connections: config.connections, devices: config.devices }));
   assert.deepEqual(labConfiguration([], [], view).view.expandedDevices, {});
   assert.notEqual(configurationSignature(config), configurationSignature(labConfiguration(devices.map(d => ({ ...d, x: d.x + 1 })), connections, view)));
 });
