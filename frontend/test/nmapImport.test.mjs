@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DOMParser } from '@xmldom/xmldom';
-import { parseNmapXml, suggestInventoryMatch, applyNmapReview, practiceCopies, MAX_NMAP_BYTES } from '../src/nmapImport.mjs';
+import { parseNmapXml, suggestInventoryMatch, applyNmapReview, practiceCopies, MAX_NMAP_BYTES, withLocalDiscoveryContext } from '../src/nmapImport.mjs';
 import { serializeLab, parseLab, DEFAULT_VIEW } from '../src/labFile.mjs';
 const parseXml = text => new DOMParser({ onError: (level, message) => { throw new Error(message); } }).parseFromString(text, 'application/xml');
 const sample = readFileSync(new URL('../src/examples/nmap-sample.xml', import.meta.url), 'utf8');
@@ -120,4 +120,26 @@ test('JSON backup restores inventory and profile history, preserves lab referenc
   assert.deepEqual(parseLab(JSON.stringify({ format: 'network-lab', version: 1, devices: [], connections: [] })).inventory, []);
   const invalid = JSON.parse(serializeLab(lab, [], DEFAULT_VIEW, inventory)); invalid.inventory[0].discovery.observations[0].services[0].port = '443';
   assert.throws(() => parseLab(JSON.stringify(invalid)), /service/);
+});
+
+
+test('local discovery context records interface facts and cached MAC provenance without overwriting Nmap evidence', () => {
+  const scan = parse(sample);
+  scan.candidates[1].observation.mac = '';
+  const result = withLocalDiscoveryContext(scan, { network: { interface: 'eth0', cidr: '10.0.0.0/24', gateway: '10.0.0.1' }, neighbors: [{ ip: '10.0.0.1', mac: '02:99:99:99:99:99' }, { ip: '10.0.0.20', mac: '02:00:00:00:00:20' }] });
+  assert.equal(result.candidates[0].observation.mac, '02:00:00:00:00:01');
+  assert.equal(result.candidates[1].observation.mac, '02:00:00:00:00:20');
+  assert.equal(result.candidates[1].observation.hardwareSource, 'Linux neighbor cache');
+  assert.equal(result.candidates[1].observation.localNetwork, '10.0.0.0/24');
+  assert.equal(result.candidates[1].observation.source, 'Local discovery (Nmap)');
+  assert.equal(scan.candidates[1].observation.mac, '');
+});
+
+test('local results exclude out-of-scope addresses and shared cached MACs require identity review', () => {
+  const scan = parse(sample);
+  scan.candidates.forEach(c => { c.observation.mac = ''; });
+  const result = withLocalDiscoveryContext(scan, { network: { interface: 'eth0', cidr: '10.0.0.0/27' }, neighbors: [{ ip: '10.0.0.1', mac: '02:aa:aa:aa:aa:aa' }, { ip: '10.0.0.20', mac: '02:aa:aa:aa:aa:aa' }] });
+  assert.equal(result.candidates.length, 2);
+  assert.ok(result.candidates.every(c => c.sharedMac));
+  assert.equal(suggestInventoryMatch(result.candidates[0], []).selected, false);
 });

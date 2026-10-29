@@ -3,14 +3,14 @@ import { latestObservation } from "../nmapImport.mjs";
 import { DEVICE_TYPES } from "../deviceProfile.mjs";
 import "./inventory.css";
 
-export default function InventoryWorkspace({ assets, onImport, onEdit, onCopy, onBack }) {
+export default function InventoryWorkspace({ assets, onImport, onEdit, onCopy, onBack, onDiscover }) {
   const [selected, setSelected] = useState(new Set()), [query, setQuery] = useState("");
   const [message, setMessage] = useState("");
   const filtered = assets.filter(asset => [asset.name, latestObservation(asset)?.ip, latestObservation(asset)?.hostname].some(value => value?.toLowerCase().includes(query.toLowerCase())));
   const chosen = assets.filter(asset => selected.has(asset.id));
   const toggle = id => setSelected(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   return <section className="inventory-workspace" aria-label="Discovered device inventory">
-    <div className="inventory-page-heading"><div><span className="inventory-eyebrow">MY NETWORK / INVENTORY</span><h2>Discover, review, understand</h2><p>Observed devices stay separate from your simulated lab.</p></div><div className="inventory-actions"><button onClick={onBack}>Back to lab</button><button className="inventory-primary" onClick={onImport}>Import Nmap XML</button></div></div>
+    <div className="inventory-page-heading"><div><span className="inventory-eyebrow">MY NETWORK / INVENTORY</span><h2>Discover, review, understand</h2><p>Observed devices stay separate from your simulated lab.</p></div><div className="inventory-actions"><button onClick={onBack}>Back to lab</button><button onClick={onDiscover}>Discover local network</button><button className="inventory-primary" onClick={onImport}>Import Nmap XML</button></div></div>
     <div className="inventory-callout">This is a saved view of scan evidence, not a live network map. No cables, subnets, or current online status are inferred. Use a practice copy to experiment without changing real devices.</div>
     <div className="inventory-toolbar"><label>Find a device<input aria-label="Find inventory device" value={query} onChange={event => setQuery(event.target.value)} placeholder="Name, observed IP, or hostname" /></label><span>{assets.length} assets · {chosen.length} selected</span><button disabled={!chosen.length} onClick={() => { const result = onCopy(chosen); if (result?.error) setMessage(result.error); }}>Add selected to practice lab</button></div>
     {message && <p className="inventory-error" role="alert">{message}</p>}

@@ -21,7 +21,7 @@ export function profileDraft(device) {
 export function validateObservation(observation) {
   if (!object(observation) || !text(observation.source, 80) || !observation.source.trim()
       || !text(observation.observedAt, 40) || !/^\d{4}-\d\d-\d\dT/.test(observation.observedAt) || !Number.isFinite(Date.parse(observation.observedAt))) return ["Discovery observations need a source and an ISO timestamp."];
-  for (const key of ["hostname", "ip", "mac", "suggestedType", "vendor", "os", "sourceFile", "timestampSource"]) {
+  for (const key of ["hostname", "ip", "mac", "suggestedType", "vendor", "os", "sourceFile", "timestampSource", "localInterface", "localNetwork", "gateway", "hardwareSource"]) {
     if (observation[key] !== undefined && !text(observation[key], 200)) return [`Invalid discovery ${key}.`];
   }
   if (observation.ip && !ipv4Network(observation.ip)) return ["Observed IP must be an IPv4 address."];

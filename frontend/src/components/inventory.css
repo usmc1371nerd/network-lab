@@ -45,6 +45,16 @@
 .inventory-summary { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 14px; background: #0d1117; border-radius: 6px; }
 .inventory-summary strong { color: #f0f6fc; }
 .inventory-summary span { color: #8b949e; font-size: 11px; }
+.discovery-dialog { max-width: 850px; }
+.discovery-fields { display: grid; grid-template-columns: 1.3fr 1fr; gap: 15px; margin-bottom: 20px; }
+.discovery-fields label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
+.discovery-fields input, .discovery-fields select { padding: 9px 10px; border: 1px solid #484f58; border-radius: 5px; background: #0d1117; color: #f0f6fc; font: inherit; width: 100%; }
+.discovery-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin: 0 0 18px; }
+.discovery-facts dt { color: #8b949e; font-size: 10px; margin-bottom: 5px; }
+.discovery-facts dd { color: #f0f6fc; overflow-wrap: anywhere; font-size: 12px; }
+.discovery-progress { padding: 16px; margin-top: 20px; border: 1px solid #58a6ff55; border-radius: 6px; }
+.discovery-progress p { margin: 10px 0; font-size: 12px; color: #8b949e; line-height: 1.6; }
+@media (max-width: 600px) { .discovery-fields { grid-template-columns: 1fr; } }
 .nmap-dialog details { padding: 12px 0; color: #8b949e; font-size: 11px; }
 .nmap-dialog details summary { cursor: pointer; }
 .nmap-dialog details ul { padding: 10px 20px; line-height: 1.7; }

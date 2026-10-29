@@ -83,9 +83,12 @@ if [[ ! -f "$project_root/frontend/node_modules/vite/bin/vite.js" ]]; then
 fi
 
 echo "[Network Lab] Starting services..."
+if ! command -v nmap >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1; then
+  echo "[Discovery] Optional: install nmap and iproute2 to enable local network discovery. XML import is available."
+fi
 # Disable Flask's child-process reloader so service shutdown remains predictable.
 start_service Backend 5000 "$project_root/backend" \
-  "$python_exe" -m flask --app app run --debug --no-reload --host 127.0.0.1 --port 5000
+  env NETWORK_LAB_DISCOVERY=1 "$python_exe" -m flask --app app run --debug --no-reload --host 127.0.0.1 --port 5000
 start_service Frontend 3000 "$project_root/frontend" \
   npm run dev -- --host 127.0.0.1 --port 3000 --strictPort
 

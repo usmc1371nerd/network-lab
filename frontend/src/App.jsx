@@ -7,6 +7,7 @@ import FirewallDashboard from "./components/FirewallDashboard";
 import DeviceProfile from "./components/DeviceProfile";
 import NmapImport from "./components/NmapImport";
 import InventoryWorkspace from "./components/InventoryWorkspace";
+import LocalDiscovery from "./components/LocalDiscovery";
 import { applyNmapReview, practiceCopies } from "./nmapImport.mjs";
 import { buildProfileUpdate, BLUETOOTH_TYPES } from "./deviceProfile.mjs";
 import { DEFAULT_VIEW, MAX_LAB_FILE_BYTES, labConfiguration, configurationSignature, serializeLab, parseLab } from "./labFile.mjs";
@@ -79,10 +80,13 @@ export default function App() {
   const [workspace, setWorkspace] = useState("lab");
   const [nmapImportOpen, setNmapImportOpen] = useState(false);
   const [selectedProfileScope, setSelectedProfileScope] = useState("lab");
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const [discoveryPending, setDiscoveryPending] = useState(false);
+  const [localDiscoveryResult, setLocalDiscoveryResult] = useState(null);
   const importInputRef = useRef(null);
   const configuration = labConfiguration(devices, connections, canvasView, inventory);
   const signature = configurationSignature(configuration);
-  const hasUnexportedChanges = signature !== exportedSignature || firewallPending || profilePending;
+  const hasUnexportedChanges = signature !== exportedSignature || firewallPending || profilePending || discoveryPending || Boolean(nmapImportOpen && localDiscoveryResult);
   const currentLabRef = useRef(null);
   currentLabRef.current = { configuration, signature, hasUnexportedChanges };
 
@@ -134,6 +138,7 @@ export default function App() {
       setInventory(restored.inventory);
       setWorkspace(restored.devices.length ? "lab" : restored.inventory.length ? "inventory" : "lab");
       setNmapImportOpen(false);
+      setDiscoveryOpen(false); setDiscoveryPending(false); setLocalDiscoveryResult(null);
       setConnections(restored.connections);
       setCanvasView(restored.view);
       setCapturedPackets([]);
@@ -716,7 +721,7 @@ export default function App() {
     try {
       const result = applyNmapReview(inventory, candidates, selections);
       serializeLab(devices, connections, canvasView, result.inventory);
-      setInventory(result.inventory); setWorkspace("inventory"); setActiveFirewallId(null); setNmapImportOpen(false);
+      setInventory(result.inventory); setWorkspace("inventory"); setActiveFirewallId(null); setNmapImportOpen(false); setLocalDiscoveryResult(null);
       setFileMessage({ kind: "success", text: `Scan imported: ${result.added} new assets, ${result.updated} matched assets reviewed. No lab devices or cables changed. Export to keep your inventory.` });
       return {};
     } catch (error) { return { error: error.message }; }
@@ -747,6 +752,7 @@ export default function App() {
             {importing ? "Importing…" : "Import lab"}
           </button>
           <button className="lab-file-button" disabled={importing || firewallPending || profilePending} onClick={() => setNmapImportOpen(true)}>Import Nmap scan</button>
+          <button className="lab-file-button" disabled={importing || firewallPending || profilePending} onClick={() => setDiscoveryOpen(true)}>Discover local network</button>
           <input ref={importInputRef} type="file" accept=".json,application/json" aria-label="Import lab JSON file" hidden onChange={importLab} />
         </div>
       </header>
@@ -754,11 +760,12 @@ export default function App() {
         Export your lab and inventory before closing or refreshing. They are not saved automatically.
         {firewallPending && <span className="lab-file-message">Apply or discard firewall settings before exporting.</span>}
         {profilePending && <span className="lab-file-message">Save or cancel profile changes before exporting.</span>}
+        {(discoveryPending || (nmapImportOpen && localDiscoveryResult)) && <span className="lab-file-message">Discovery results are included in your backup only after you review and import them.</span>}
         {fileMessage && <span className={`lab-file-message ${fileMessage.kind}`} role={fileMessage.kind === "error" ? "alert" : "status"}>{fileMessage.text}</span>}
       </div>
 
       <div className="app-body">
-        {workspace === "inventory" && <InventoryWorkspace assets={inventory} onImport={() => setNmapImportOpen(true)}
+        {workspace === "inventory" && <InventoryWorkspace assets={inventory} onImport={() => setNmapImportOpen(true)} onDiscover={() => setDiscoveryOpen(true)}
           onEdit={id => { setSelectedProfileScope("inventory"); setSelectedProfileId(id); }}
           onCopy={copyToPractice} onBack={() => setWorkspace("lab")} />}
         {activeFirewall && <FirewallDashboard
@@ -838,7 +845,12 @@ export default function App() {
         onSave={draft => saveDeviceProfile(selectedProfile.id, draft)}
         onClose={() => { setSelectedProfileId(null); setProfilePending(false); }}
       />}
-      {nmapImportOpen && <NmapImport inventory={inventory} onApply={applyScan} onClose={() => setNmapImportOpen(false)} />}
+      {nmapImportOpen && <NmapImport inventory={inventory} localResult={localDiscoveryResult} onApply={applyScan} onClose={() => { setNmapImportOpen(false); setLocalDiscoveryResult(null); }} />}
+      {discoveryOpen && <LocalDiscovery onPendingChange={setDiscoveryPending}
+        onClose={() => setDiscoveryOpen(false)}
+        onImportXml={() => { setDiscoveryOpen(false); setLocalDiscoveryResult(null); setNmapImportOpen(true); }}
+        onReview={result => { setLocalDiscoveryResult(result); setDiscoveryOpen(false); setNmapImportOpen(true); }}
+      />}
     </div>
   );
 }

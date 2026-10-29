@@ -9,6 +9,7 @@ import ipaddress
 import shlex
 from collections import deque
 from link_simulation import LinkSimulation
+from discovery import discovery_blueprint
 from firewall import (FirewallSimulation, addresses as device_addresses,
                       interfaces as firewall_interfaces, interface_for_neighbor, is_active as firewall_active, is_configured as firewall_configured)
 
@@ -35,6 +36,7 @@ FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIST_DIR), static_url_path="")
 CORS(app)
+app.register_blueprint(discovery_blueprint())
 
 
 def make_mac():

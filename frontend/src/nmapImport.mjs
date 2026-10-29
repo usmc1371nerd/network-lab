@@ -145,3 +145,30 @@ export function practiceCopies(assets, labDevices, idFactory = () => crypto.rand
 }
 
 export const latestObservation = latest;
+
+export function withLocalDiscoveryContext(scan, result) {
+  const neighbors = new Map((result.neighbors || []).map(neighbor => [neighbor.ip, mac(neighbor.mac)]));
+  const scope = ipv4Network(result.network.cidr);
+  if (!scope) throw new Error("The local discovery scope is invalid.");
+  const broadcast = (scope.network | (~scope.mask >>> 0)) >>> 0;
+  const eligible = scan.candidates.filter(candidate => {
+    const address = ipv4Network(candidate.observation.ip)?.address;
+    return address !== undefined && ((address & scope.mask) >>> 0) === scope.network
+      && (scope.prefix >= 31 || (address !== scope.network && address !== broadcast));
+  });
+  const candidates = eligible.map(candidate => {
+      const observation = { ...candidate.observation, evidence: [...candidate.observation.evidence], source: "Local discovery (Nmap)",
+        localInterface: result.network.interface, localNetwork: result.network.cidr, gateway: result.network.gateway || "" };
+      if (!observation.mac && neighbors.get(observation.ip)) {
+        observation.mac = neighbors.get(observation.ip);
+        observation.hardwareSource = "Linux neighbor cache";
+        observation.evidence.push("MAC reported by Linux neighbor cache (may be cached).");
+      }
+      return { ...candidate, observation };
+    });
+  const counts = new Map();
+  candidates.forEach(candidate => { if (candidate.observation.mac) counts.set(candidate.observation.mac, (counts.get(candidate.observation.mac) || 0) + 1); });
+  candidates.forEach(candidate => { candidate.sharedMac = candidate.sharedMac || Boolean(candidate.observation.mac && counts.get(candidate.observation.mac) > 1); });
+  const omitted = scan.candidates.length - candidates.length;
+  return { ...scan, isLocal: true, candidates, warnings: [...scan.warnings, ...(omitted ? [`${omitted} out-of-scope or network/broadcast address records omitted.`] : [])] };
+}

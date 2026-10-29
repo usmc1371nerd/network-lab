@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import { MAX_NMAP_BYTES, parseNmapXml, suggestInventoryMatch } from "../nmapImport.mjs";
+import { MAX_NMAP_BYTES, parseNmapXml, suggestInventoryMatch, withLocalDiscoveryContext } from "../nmapImport.mjs";
 import { DEVICE_TYPES } from "../deviceProfile.mjs";
 import sampleScan from "../examples/nmap-sample.xml?raw";
 import "./inventory.css";
 
-export default function NmapImport({ inventory, onApply, onClose }) {
+export default function NmapImport({ inventory, onApply, onClose, localResult }) {
   const [scan, setScan] = useState(null), [rows, setRows] = useState([]), [error, setError] = useState("");
   const [reading, setReading] = useState(false);
   const dialogRef = useRef(null), requestRef = useRef(0);
@@ -13,13 +13,17 @@ export default function NmapImport({ inventory, onApply, onClose }) {
     dialogRef.current?.querySelector("button")?.focus();
     return () => { requestRef.current++; if (previous?.isConnected) previous.focus(); };
   }, []);
-  const read = async (file, isSample = false) => {
+  useEffect(() => {
+    if (localResult) read(new File([localResult.xml], "local-discovery.xml", { type: "application/xml" }), false, localResult);
+  }, []);
+  const read = async (file, isSample = false, discoveryResult = null) => {
     if (!file) return;
     const request = ++requestRef.current;
     setReading(true); setError(""); setScan(null); setRows([]);
     try {
       if (file.size > MAX_NMAP_BYTES) throw new Error("Nmap XML files must be 5 MB or smaller.");
-      const parsed = parseNmapXml(await file.text(), { sourceFile: file.name });
+      let parsed = parseNmapXml(await file.text(), { sourceFile: file.name });
+      if (discoveryResult) parsed = withLocalDiscoveryContext(parsed, discoveryResult);
       if (request !== requestRef.current) return;
       if (isSample) parsed.candidates.forEach(candidate => {
         candidate.observation.source = "Sample Nmap XML";
@@ -44,9 +48,9 @@ export default function NmapImport({ inventory, onApply, onClose }) {
     else if (!event.shiftKey && document.activeElement === focusable.at(-1)) { event.preventDefault(); focusable[0]?.focus(); }
   };
   return <div className="inventory-backdrop"><section className="nmap-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="nmap-heading" onKeyDown={keyDown}>
-    <header><div><span className="inventory-eyebrow">DISCOVERY IMPORT</span><h2 id="nmap-heading">Import an Nmap scan</h2><p>Review observed devices before adding them to your inventory.</p></div><button aria-label="Close Nmap import" onClick={onClose}>×</button></header>
+    <header><div><span className="inventory-eyebrow">DISCOVERY IMPORT</span><h2 id="nmap-heading">{localResult ? "Review local discovery" : "Import an Nmap scan"}</h2><p>Review observed devices before adding them to your inventory.</p></div><button aria-label="Close Nmap import" onClick={onClose}>×</button></header>
     <div className="nmap-body">
-      <div className="inventory-callout">Choose an existing Nmap XML file. Parsing happens in your browser. This does not run a scan or create physical connections.</div>
+      <div className="inventory-callout">{localResult ? `Results from ${localResult.network.interface} on ${localResult.network.cidr}. Reviewing does not create cables or change real devices.` : "Choose an existing Nmap XML file. Parsing happens in your browser. This does not run a scan or create physical connections."}</div>
       <div className="inventory-toolbar"><label className="inventory-file">Choose XML file<input type="file" accept=".xml,application/xml,text/xml" aria-label="Nmap XML file" disabled={reading} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; read(file); }} /></label><button disabled={reading} onClick={() => read(new File([sampleScan], "sample-network.xml", { type: "application/xml" }), true)}>Try a sample file</button><span>{reading ? "Reading scan…" : "Up to 5 MB · IPv4 hosts"}</span></div>
       {error && <p className="inventory-error" role="alert">{error}</p>}
       {scan && <>
